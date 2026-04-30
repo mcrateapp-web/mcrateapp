@@ -208,7 +208,7 @@ function saveSession(session) {
 
 // ─── Auth Stage ───────────────────────────────────────────────────────────────
 function loadAuthStage() {
-  try { return loadSession() ? "app" : "splash"; } catch { return "splash"; }
+  try { return "app"; } catch { return "app"; }
 }
 function saveAuthStage(stage) {
   if (stage === "login" || stage === "signup") saveSession(null);
@@ -339,15 +339,18 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
 
   const handleVote = (v) => {
     if (vote === v) {
+      // Undo vote
       setVote(null);
-      if (v === "agree") setAgrees(a=>a-1);
-      else setDisagrees(d=>d-1);
+      if (v === "agree") { setAgrees(a=>a-1); onAgree(v); }
+      else { setDisagrees(d=>d-1); onDisagree(v); }
     } else {
+      // Switch or new vote
       if (vote === "agree") setAgrees(a=>a-1);
       if (vote === "disagree") setDisagrees(d=>d-1);
+      const prev = vote;
       setVote(v);
-      if (v === "agree") { setAgrees(a=>a+1); onAgree(); }
-      else { setDisagrees(d=>d+1); onDisagree(); }
+      if (v === "agree") { setAgrees(a=>a+1); onAgree(prev); }
+      else { setDisagrees(d=>d+1); onDisagree(prev); }
     }
   };
 
@@ -570,7 +573,7 @@ function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, on
     touchStart.current = null;
   };
 
-  const isEmpty = filtered.length === 0 && !search.trim();
+  const isEmpty = reviews.length === 0 && !search.trim() && filter === "all";
 
   return (
     <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
@@ -635,17 +638,7 @@ function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, on
           </div>
         )}
 
-        {filtered
-          .sort((a,b) => filter==="latest" ? new Date(b.date)-new Date(a.date) : 0)
-          .map(r=>(
-            <FeedPost key={r.id} review={r} currentUser={user}
-              onAgree={()=>onAgree(r.id)} onDisagree={()=>onDisagree(r.id)}
-              onAddComment={onAddComment} onReact={onReact}
-              onReport={()=>setReportTarget(r)}
-              onOpenUser={onOpenUser}
-            />
-          ))
-        }
+        {filtered.map(r=><FeedPost key={r.id} review={r} currentUser={user} onAgree={(currentVote)=>onAgree(r.id,currentVote)} onDisagree={(currentVote)=>onDisagree(r.id,currentVote)} onAddComment={onAddComment} onReact={onReact} onReport={()=>setReportTarget(r)} onOpenUser={onOpenUser}/>)}
       </div>
 
       {reportTarget && <ReportModal review={reportTarget} onClose={()=>setReportTarget(null)} onReport={handleReport}/>}
@@ -675,7 +668,7 @@ function LocationSearch({ onSelect, defaultLocation }) {
     if (GOOGLE_API_KEY === "YOUR_GOOGLE_PLACES_API_KEY") { setNoApiKey(true); return; }
     if (window.google?.maps?.places) { setApiReady(true); return; }
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry`;
     script.async = true;
     script.onload = () => setApiReady(true);
     script.onerror = () => setNoApiKey(true);
@@ -693,16 +686,15 @@ function LocationSearch({ onSelect, defaultLocation }) {
     if (!q.trim() || !apiReady) { setResults([]); return; }
     setLoading(true);
     const service = new window.google.maps.places.AutocompleteService();
+    // Automatically search for McDonald's at the location the user types
+    const searchQuery = q.toLowerCase().includes("mcdonald") ? q : `McDonald's ${q}`;
     service.getPlacePredictions({
-      input: q,
-      // Bias results to McDonald's
+      input: searchQuery,
       types: ["establishment"],
-      componentRestrictions: { country: "au" },
       sessionToken: new window.google.maps.places.AutocompleteSessionToken(),
     }, (predictions, status) => {
       setLoading(false);
       if (status !== window.google.maps.places.PlacesServiceStatus.OK || !predictions) { setResults([]); return; }
-      // Filter to McDonald's only
       const mcds = predictions.filter(p =>
         p.structured_formatting.main_text.toLowerCase().includes("mcdonald") ||
         p.description.toLowerCase().includes("mcdonald")
@@ -769,7 +761,7 @@ function LocationSearch({ onSelect, defaultLocation }) {
           value={query}
           onChange={handleChange}
           onFocus={() => query.trim() && setShowResults(true)}
-          placeholder="Search for a McDonald's…"
+          placeholder="Search suburb or area…"
           style={{ width:"100%", padding:"11px 40px 11px 14px", border:`1.5px solid ${selected?"#22c55e":LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none", background:W, color:DARK }}
         />
         <div style={{ position:"absolute", right:14, top:"50%", transform:"translateY(-50%)" }}>
@@ -1059,17 +1051,20 @@ function BestWorstTab({ reviews, locations, onOpenLocation, onOpenMenuItem }) {
 
   const getAvg = id => { const r=reviews.filter(x=>x.locationId===id); if(!r.length) return null; return { avg:(r.reduce((a,x)=>a+x.rating,0)/r.length).toFixed(1), count:r.length }; };
 
-  const locData = locations.map(l => {
+  // All locations with distance, including unrated ones
+  const allLocData = locations.map(l => {
     const stats = getAvg(l.id);
     const dist = userCoords && l.lat && l.lng ? calcDistance(userCoords.lat, userCoords.lng, l.lat, l.lng) : l.distance;
-    return { ...l, ...stats, distance: dist };
-  }).filter(l => l.avg);
+    return { ...l, ...(stats||{}), distance: dist, hasReviews: !!stats };
+  });
 
-  // Local: sort by distance. Global: sort by rating
-  const sorted = scope === "local"
-    ? [...locData].sort((a,b) => parseFloat(a.distance) - parseFloat(b.distance))
-    : [...locData].sort((a,b) => parseFloat(b.avg) - parseFloat(a.avg));
+  // Rated locations only for global rankings
+  const locData = allLocData.filter(l => l.hasReviews);
 
+  // Local: ALL locations sorted by distance
+  const sorted = [...allLocData].sort((a,b) => parseFloat(a.distance) - parseFloat(b.distance));
+
+  // Global: rated only, sorted by rating
   const best = [...locData].sort((a,b)=>parseFloat(b.avg)-parseFloat(a.avg));
   const worst = [...locData].sort((a,b)=>parseFloat(a.avg)-parseFloat(b.avg));
 
@@ -1078,8 +1073,8 @@ function BestWorstTab({ reviews, locations, onOpenLocation, onOpenMenuItem }) {
   const itemData = Object.entries(itemRatings).map(([item,rats])=>({ item, avg:(rats.reduce((a,b)=>a+b,0)/rats.length).toFixed(1), count:rats.length })).sort((a,b)=>parseFloat(b.avg)-parseFloat(a.avg));
 
   const LocCard = ({ loc, rank, isBest, showDistance=false }) => (
-    <div onClick={()=>onOpenLocation(loc)} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px", background:W, borderRadius:16, marginBottom:8, boxShadow:"0 2px 12px rgba(0,0,0,0.06)", borderLeft:`4px solid ${showDistance?"#3b82f6":isBest?"#22c55e":R}`, cursor:"pointer" }}>
-      <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:28, color:showDistance?"#3b82f6":isBest?"#22c55e":R, width:36, textAlign:"center" }}>#{rank}</div>
+    <div onClick={()=>onOpenLocation(loc)} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px", background:W, borderRadius:16, marginBottom:8, boxShadow:"0 2px 12px rgba(0,0,0,0.06)", borderLeft:`4px solid ${!loc.hasReviews?"#CBD5E1":showDistance?"#3b82f6":isBest?"#22c55e":R}`, cursor:"pointer" }}>
+      {rank && <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:28, color:!loc.hasReviews?LG:showDistance?"#3b82f6":isBest?"#22c55e":R, width:36, textAlign:"center" }}>#{rank}</div>}
       <div style={{ flex:1 }}>
         <div style={{ fontWeight:700, fontSize:15, color:DARK }}>{loc.name}</div>
         <div style={{ fontSize:12, color:GRAY, marginTop:2, display:"flex", alignItems:"center", gap:4 }}>
@@ -1087,12 +1082,18 @@ function BestWorstTab({ reviews, locations, onOpenLocation, onOpenMenuItem }) {
             ? <><MapPin size={11} color="#3b82f6"/><span style={{ color:"#3b82f6", fontWeight:600 }}>{loc.distance}km away</span></>
             : <><MapPin size={11} color={GRAY}/><span>{loc.distance}km</span></>
           }
-          <span>· {loc.count} review{loc.count!==1?"s":""}</span>
+          {loc.hasReviews && <span>· {loc.count} review{loc.count!==1?"s":""}</span>}
         </div>
-        <Stars n={parseFloat(loc.avg)} size={13}/>
+        {loc.hasReviews
+          ? <Stars n={parseFloat(loc.avg)} size={13}/>
+          : <div style={{ fontSize:12, color:R, fontWeight:600, marginTop:4 }}>⭐ Be the first to review!</div>
+        }
       </div>
       <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-        <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:32, color:showDistance?DARK:isBest?"#22c55e":R }}>{loc.avg}</div>
+        {loc.hasReviews
+          ? <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:32, color:showDistance?DARK:isBest?"#22c55e":R }}>{loc.avg}</div>
+          : <div style={{ fontSize:12, color:GRAY, textAlign:"center", lineHeight:1.3 }}>No<br/>rating</div>
+        }
         <span style={{ color:LG, fontSize:18 }}>›</span>
       </div>
     </div>
@@ -1207,21 +1208,232 @@ function BestWorstTab({ reviews, locations, onOpenLocation, onOpenMenuItem }) {
 }
 
 // ─── Journey Tab ──────────────────────────────────────────────────────────────
-function JourneyTab({ reviews, locations, onOpenLocation }) {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+function JourneyTab({ reviews, onOpenLocation }) {
+  const [fromText, setFromText] = useState("");
+  const [toText, setToText] = useState("");
+  const [fromPlace, setFromPlace] = useState(null);
+  const [toPlace, setToPlace] = useState(null);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
-  const getAvg = id => { const r=reviews.filter(x=>x.locationId===id); return r.length?(r.reduce((a,x)=>a+x.rating,0)/r.length).toFixed(1):"N/A"; };
+  const [error, setError] = useState("");
+  const [mapReady, setMapReady] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const fromInputRef = useRef(null);
+  const toInputRef = useRef(null);
+  const fromACRef = useRef(null);
+  const toACRef = useRef(null);
 
-  const search = async () => {
-    if(!from||!to) return; setLoading(true);
+  // Load Google Maps script if not already loaded
+  useEffect(() => {
+    if (window.google?.maps) { setMapReady(true); return; }
+    const existing = document.querySelector('script[src*="maps.googleapis.com"]');
+    if (existing) {
+      existing.addEventListener('load', () => setMapReady(true));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry`;
+    script.async = true;
+    script.onload = () => setMapReady(true);
+    document.head.appendChild(script);
+  }, []);
+
+  // Set up autocomplete on inputs
+  useEffect(() => {
+    if (!mapReady || !fromInputRef.current || !toInputRef.current) return;
+    fromACRef.current = new window.google.maps.places.Autocomplete(fromInputRef.current, { fields: ["place_id","name","geometry","formatted_address"] });
+    fromACRef.current.addListener("place_changed", () => {
+      const p = fromACRef.current.getPlace();
+      if (p.geometry) { setFromPlace(p); setFromText(p.name || p.formatted_address); }
+    });
+    toACRef.current = new window.google.maps.places.Autocomplete(toInputRef.current, { fields: ["place_id","name","geometry","formatted_address"] });
+    toACRef.current.addListener("place_changed", () => {
+      const p = toACRef.current.getPlace();
+      if (p.geometry) { setToPlace(p); setToText(p.name || p.formatted_address); }
+    });
+  }, [mapReady]);
+
+  // Init map once results are shown
+  useEffect(() => {
+    if (!mapReady || !results || !mapRef.current) return;
+    if (mapInstanceRef.current) return;
+    mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
+      zoom: 10,
+      center: fromPlace?.geometry?.location || { lat: -33.8688, lng: 151.2093 },
+      mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+      styles: [{ featureType:"poi", elementType:"labels", stylers:[{visibility:"off"}] }]
+    });
+  }, [results, mapReady]);
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) { setError("Geolocation not supported"); return; }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(async pos => {
+      const { latitude: lat, longitude: lng } = pos.coords;
+      try {
+        const geocoder = new window.google.maps.Geocoder();
+        geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+          if (status === "OK" && results[0]) {
+            const addr = results[0].formatted_address;
+            setFromText(addr);
+            setFromPlace({ geometry: { location: new window.google.maps.LatLng(lat, lng) }, formatted_address: addr });
+            if (fromInputRef.current) fromInputRef.current.value = addr;
+          }
+        });
+      } catch {}
+      setLocating(false);
+    }, () => { setError("Could not get location"); setLocating(false); });
+  };
+
+  const getAvgRating = (placeId) => {
+    const r = reviews.filter(x => x.locationId === placeId);
+    return r.length ? (r.reduce((a,x)=>a+x.rating,0)/r.length).toFixed(1) : null;
+  };
+
+  const findRoute = async () => {
+    if (!fromPlace || !toPlace) { setError("Please select both start and end points from the suggestions"); return; }
+    setLoading(true); setError(""); setResults(null);
+    if (mapInstanceRef.current) { mapInstanceRef.current = null; }
+
     try {
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:`For a driving route from ${from} to ${to} in Australia, list 4-5 McDonald's along or near the route. Return ONLY a JSON array: [{"name":"McDonald's X","suburb":"Suburb NSW","detourMins":3,"distanceFromRoute":0.5}].`}]})});
-      const d=await res.json(); const txt=d.content?.filter(b=>b.type==="text").map(b=>b.text).join("");
-      const clean=txt.replace(/```json|```/g,"").trim(); const s=clean.indexOf("["),e=clean.lastIndexOf("]")+1;
-      if(s!==-1){const parsed=JSON.parse(clean.slice(s,e)); setResults(parsed.map((p,i)=>({...p,id:locations[i%locations.length]?.id,rating:getAvg(locations[i%locations.length]?.id)})));}
-    } catch{setResults([]);}
+      const directionsService = new window.google.maps.DirectionsService();
+      const directionsRenderer = new window.google.maps.DirectionsRenderer({ suppressMarkers: false });
+
+      // Get route
+      const routeResult = await new Promise((resolve, reject) => {
+        directionsService.route({
+          origin: fromPlace.geometry.location,
+          destination: toPlace.geometry.location,
+          travelMode: window.google.maps.TravelMode.DRIVING,
+        }, (result, status) => {
+          if (status === "OK") resolve(result);
+          else reject(new Error(status));
+        });
+      });
+
+      const route = routeResult.routes[0];
+      const leg = route.legs[0];
+      const totalDuration = leg.duration.value; // seconds
+
+      // Sample points along the route to search for McDonald's
+      const path = route.overview_path;
+      const totalPoints = path.length;
+      const samplePoints = [];
+      for (let i = 0; i < 5; i++) {
+        samplePoints.push(path[Math.floor((i / 4) * (totalPoints - 1))]);
+      }
+
+      // Search for McDonald's near each sample point
+      const placesService = new window.google.maps.places.PlacesService(document.createElement("div"));
+      const allMcds = new Map();
+
+      await Promise.all(samplePoints.map(point => new Promise(resolve => {
+        placesService.nearbySearch({
+          location: point,
+          radius: 5000,
+          keyword: "McDonald's",
+          type: "restaurant"
+        }, (results, status) => {
+          if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+            results.forEach(p => {
+              if (p.name.toLowerCase().includes("mcdonald") && !allMcds.has(p.place_id)) {
+                allMcds.set(p.place_id, p);
+              }
+            });
+          }
+          resolve();
+        });
+      })));
+
+      // Calculate detour time for each McDonald's
+      const distanceMatrix = new window.google.maps.DistanceMatrixService();
+      const mcdsArray = Array.from(allMcds.values()).slice(0, 10);
+
+      const detourResults = await Promise.all(mcdsArray.map(async mcd => {
+        return new Promise(resolve => {
+          distanceMatrix.getDistanceMatrix({
+            origins: [fromPlace.geometry.location],
+            destinations: [mcd.geometry.location],
+            travelMode: window.google.maps.TravelMode.DRIVING,
+          }, (res, status) => {
+            if (status === "OK") {
+              const element = res.rows[0].elements[0];
+              const detourSecs = element.duration?.value || 0;
+              // Rough detour: time to McDonald's + time from McDonald's to destination vs direct
+              const detourMins = Math.round(Math.max(0, detourSecs - totalDuration / 2) / 60);
+              resolve({
+                placeId: mcd.place_id,
+                name: mcd.name,
+                address: mcd.vicinity,
+                lat: mcd.geometry.location.lat(),
+                lng: mcd.geometry.location.lng(),
+                rating: getAvgRating(mcd.place_id),
+                googleRating: mcd.rating,
+                detourMins,
+                location: mcd.geometry.location,
+              });
+            } else resolve(null);
+          });
+        });
+      }));
+
+      // Filter nulls and sort by position along route
+      const validResults = detourResults
+        .filter(Boolean)
+        .sort((a, b) => {
+          // Sort by how far along the route each McDonald's is
+          const pathLatLng = path.map(p => new window.google.maps.LatLng(p.lat(), p.lng()));
+          const getClosestIdx = (loc) => {
+            let minDist = Infinity, minIdx = 0;
+            pathLatLng.forEach((p, i) => {
+              const d = window.google.maps.geometry.spherical.computeDistanceBetween(p, loc);
+              if (d < minDist) { minDist = d; minIdx = i; }
+            });
+            return minIdx;
+          };
+          return getClosestIdx(a.location) - getClosestIdx(b.location);
+        });
+
+      setResults({ mcds: validResults, route: routeResult, leg });
+
+      // Draw map
+      setTimeout(() => {
+        if (!mapRef.current) return;
+        const map = new window.google.maps.Map(mapRef.current, {
+          mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+          styles: [{ featureType:"poi", elementType:"labels", stylers:[{visibility:"off"}] }]
+        });
+        mapInstanceRef.current = map;
+        directionsRenderer.setMap(map);
+        directionsRenderer.setDirections(routeResult);
+
+        // Add McDonald's markers
+        validResults.forEach((mcd, i) => {
+          const marker = new window.google.maps.Marker({
+            position: { lat: mcd.lat, lng: mcd.lng },
+            map,
+            title: mcd.name,
+            label: { text: `${i+1}`, color: "white", fontWeight: "bold" },
+            icon: {
+              path: window.google.maps.SymbolPath.CIRCLE,
+              scale: 14,
+              fillColor: "#DA291C",
+              fillOpacity: 1,
+              strokeColor: "#FFC72C",
+              strokeWeight: 2,
+            }
+          });
+          marker.addListener("click", () => {
+            onOpenLocation({ id: mcd.placeId, name: mcd.name, address: mcd.address });
+          });
+        });
+      }, 100);
+
+    } catch(e) {
+      setError(`Could not find route: ${e.message}. Please check your start and end points.`);
+    }
     setLoading(false);
   };
 
@@ -1232,41 +1444,100 @@ function JourneyTab({ reviews, locations, onOpenLocation }) {
           <Map size={20} color={R}/>
           <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, color:R, letterSpacing:1.5 }}>MY JOURNEY</div>
         </div>
+
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          {[["from",from,setFrom,<MapPin size={14} color="#22c55e"/>,"Starting point…"],["to",to,setTo,<MapPin size={14} color={R}/>,"Destination…"]].map(([k,v,set,ic,ph])=>(
-            <div key={k} style={{ position:"relative" }}>
-              <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", display:"flex", alignItems:"center" }}>{ic}</span>
-              <input value={v} onChange={e=>set(e.target.value)} placeholder={ph} style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}/>
-            </div>
-          ))}
-          <button onClick={search} disabled={loading||!from||!to} style={{ background:from&&to?R:LG, color:from&&to?W:GRAY, border:"none", borderRadius:50, padding:"12px 0", fontWeight:700, fontSize:15, cursor:from&&to?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-            <Navigation size={16} color={from&&to?W:GRAY}/>{loading?"Finding Maccas along route…":"Find McDonald's on Route"}
+          {/* From */}
+          <div style={{ position:"relative" }}>
+            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", display:"flex", alignItems:"center", zIndex:1 }}>
+              <MapPin size={14} color="#22c55e"/>
+            </span>
+            <input
+              ref={fromInputRef}
+              value={fromText}
+              onChange={e => { setFromText(e.target.value); setFromPlace(null); }}
+              placeholder="Starting point…"
+              style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}
+            />
+          </div>
+
+          {/* Use my location button */}
+          <button onClick={useMyLocation} disabled={!mapReady || locating} style={{ background:"none", border:`1.5px solid ${LG}`, borderRadius:12, padding:"10px 14px", fontSize:13, color:R, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontFamily:"inherit" }}>
+            <MapPin size={14} color={R}/>{locating ? "Getting location…" : "Use my current location"}
+          </button>
+
+          {/* To */}
+          <div style={{ position:"relative" }}>
+            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", display:"flex", alignItems:"center", zIndex:1 }}>
+              <MapPin size={14} color={R}/>
+            </span>
+            <input
+              ref={toInputRef}
+              value={toText}
+              onChange={e => { setToText(e.target.value); setToPlace(null); }}
+              placeholder="Destination…"
+              style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}
+            />
+          </div>
+
+          {error && <div style={{ fontSize:13, color:R, fontWeight:600 }}>{error}</div>}
+
+          <button onClick={findRoute} disabled={loading || !mapReady || !fromPlace || !toPlace}
+            style={{ background: fromPlace&&toPlace ? R : LG, color: fromPlace&&toPlace ? W : GRAY, border:"none", borderRadius:50, padding:"12px 0", fontWeight:700, fontSize:15, cursor: fromPlace&&toPlace ? "pointer" : "not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8, fontFamily:"inherit" }}>
+            <Navigation size={16} color={fromPlace&&toPlace?W:GRAY}/>
+            {loading ? "Finding McDonald's on route…" : "Find McDonald's on Route"}
           </button>
         </div>
       </div>
-      {results&&(
+
+      {/* Map */}
+      {results && (
+        <div ref={mapRef} style={{ width:"100%", height:280, background:LG }}/>
+      )}
+
+      {/* Results */}
+      {results && (
         <div style={{ padding:16 }}>
-          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:18, letterSpacing:1.5, color:DARK, marginBottom:12 }}>{results.length} MACCAS ON YOUR ROUTE</div>
-          {results.map((loc,i)=>(
-            <div key={i} onClick={()=>loc.id&&onOpenLocation(locations.find(l=>l.id===loc.id)||{id:loc.id,name:loc.name,address:loc.suburb})} style={{ background:W, borderRadius:16, padding:"14px 16px", marginBottom:10, boxShadow:"0 2px 12px rgba(0,0,0,0.06)", cursor:loc.id?"pointer":"default" }}>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-                <div><div style={{ fontWeight:700, fontSize:15 }}>{loc.name}</div><div style={{ fontSize:13, color:GRAY, display:"flex", alignItems:"center", gap:3, marginTop:2 }}><MapPin size={11} color={GRAY}/>{loc.suburb}</div></div>
-                <div style={{ textAlign:"right" }}><div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:26, color:R, lineHeight:1 }}>{loc.rating}</div><div style={{ fontSize:11, color:GRAY }}>rating</div></div>
+          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:18, letterSpacing:1.5, color:DARK, marginBottom:4 }}>
+            {results.mcds.length} MACCAS ON YOUR ROUTE
+          </div>
+          <div style={{ fontSize:12, color:GRAY, marginBottom:12 }}>
+            {results.leg.distance.text} · {results.leg.duration.text} total journey
+          </div>
+          {results.mcds.length === 0 && (
+            <div style={{ textAlign:"center", padding:"40px 0", color:GRAY }}>
+              <div style={{ fontSize:14 }}>No McDonald's found along this route</div>
+            </div>
+          )}
+          {results.mcds.map((mcd, i) => (
+            <div key={mcd.placeId} onClick={() => onOpenLocation({ id:mcd.placeId, name:mcd.name, address:mcd.address })}
+              style={{ background:W, borderRadius:16, padding:"14px 16px", marginBottom:10, boxShadow:"0 2px 12px rgba(0,0,0,0.06)", cursor:"pointer", display:"flex", gap:14, alignItems:"center" }}>
+              <div style={{ width:32, height:32, borderRadius:"50%", background:R, color:W, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Bebas Neue',sans-serif", fontSize:16, flexShrink:0 }}>{i+1}</div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontWeight:700, fontSize:15, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mcd.name}</div>
+                <div style={{ fontSize:12, color:GRAY, marginTop:2, display:"flex", alignItems:"center", gap:3 }}><MapPin size={10} color={GRAY}/>{mcd.address}</div>
+                <div style={{ display:"flex", gap:8, marginTop:6, alignItems:"center" }}>
+                  {mcd.detourMins !== undefined && (
+                    <div style={{ background: mcd.detourMins<=3?"#D4EDDA":mcd.detourMins<=8?"#FFF3CD":"#F8D7DA", borderRadius:50, padding:"3px 10px", fontSize:12, fontWeight:700, color:mcd.detourMins<=3?"#155724":mcd.detourMins<=8?"#856404":"#721c24" }}>
+                      +{mcd.detourMins} min
+                    </div>
+                  )}
+                  {mcd.rating && <div style={{ display:"flex", alignItems:"center", gap:4 }}><Stars n={parseFloat(mcd.rating)} size={12}/><span style={{ fontSize:12, color:GRAY }}>{mcd.rating} McRate</span></div>}
+                  {!mcd.rating && mcd.googleRating && <span style={{ fontSize:12, color:GRAY }}>★ {mcd.googleRating} Google</span>}
+                </div>
               </div>
-              <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                <div style={{ background:loc.detourMins<=3?"#D4EDDA":loc.detourMins<=8?"#FFF3CD":"#F8D7DA", borderRadius:50, padding:"4px 12px", fontSize:13, fontWeight:700, color:loc.detourMins<=3?"#155724":loc.detourMins<=8?"#856404":"#721c24" }}>+{loc.detourMins} min</div>
-                {loc.rating!=="N/A"&&<Stars n={parseFloat(loc.rating)} size={12}/>}
-                <div style={{ fontSize:12, color:GRAY }}>{loc.distanceFromRoute}km off route</div>
-              </div>
+              <span style={{ color:LG, fontSize:18 }}>›</span>
             </div>
           ))}
         </div>
       )}
-      {!results&&!loading&&<div style={{ textAlign:"center", padding:"60px 20px", color:GRAY }}>
-        <Navigation size={56} color={LG} style={{ margin:"0 auto 12px" }}/>
-        <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, letterSpacing:2, color:DARK, marginTop:8 }}>PLAN YOUR MACCAS ROUTE</div>
-        <div style={{ fontSize:14, marginTop:8, lineHeight:1.6 }}>Enter your start and end point to find McDonald's along the way.</div>
-      </div>}
+
+      {!results && !loading && (
+        <div style={{ textAlign:"center", padding:"60px 20px", color:GRAY }}>
+          <Navigation size={56} color={LG} style={{ margin:"0 auto 12px" }}/>
+          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, letterSpacing:2, color:DARK, marginTop:8 }}>PLAN YOUR MACCAS ROUTE</div>
+          <div style={{ fontSize:14, marginTop:8, lineHeight:1.6 }}>Enter your start and end point to find McDonald's along the way.</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1377,7 +1648,7 @@ function EditProfileModal({ user, onClose, onSave }) {
 
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
 function ProfileTab({ user, reviews, onLogout, onUpdateUser }) {
-  const myReviews = reviews.filter(r=>r.userId==="u1");
+  const myReviews = reviews.filter(r => r.userId === user?.id);
   const [aiDNA, setAiDNA] = useState(null);
   const [loadingDNA, setLoadingDNA] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -1517,7 +1788,7 @@ function SplashScreen({ onDone }) {
 }
 
 // ─── Login Screen ─────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin, onGoSignUp }) {
+function LoginScreen({ onLogin, onGoSignUp, onClose }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -1540,7 +1811,12 @@ function LoginScreen({ onLogin, onGoSignUp }) {
   return (
     <div style={{ position:"fixed", inset:0, background:W, display:"flex", flexDirection:"column", maxWidth:480, margin:"0 auto", zIndex:900 }}>
       {/* Red top section */}
-      <div style={{ background:R, padding:"60px 32px 40px", display:"flex", flexDirection:"column", alignItems:"center" }}>
+      <div style={{ background:R, padding:"60px 32px 40px", display:"flex", flexDirection:"column", alignItems:"center", position:"relative" }}>
+        {onClose && (
+          <button onClick={onClose} style={{ position:"absolute", top:16, left:16, background:"rgba(255,255,255,0.2)", border:"none", color:W, width:32, height:32, borderRadius:"50%", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <ArrowLeft size={16} color={W}/>
+          </button>
+        )}
         <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:72, color:Y, lineHeight:1 }}>M</div>
         <McRateLogo size={36} onRed />
         <div style={{ fontSize:12, color:"rgba(255,255,255,0.6)", marginTop:6, letterSpacing:1.5, textTransform:"uppercase" }}>Rate Your Maccas</div>
@@ -1788,11 +2064,13 @@ export default function App() {
   const unread = notifications.filter(n=>!n.read).length;
   const setAuth = stage => { setAuthStage(stage); saveAuthStage(stage); };
 
-  // Restore session on mount
+  // Restore session on mount — load reviews regardless of auth state
   useEffect(()=>{
     const session = loadSession();
-    if (session?.token) {
-      (async ()=>{
+    (async ()=>{
+      // Always load reviews so guests can browse
+      await loadReviews(session?.token || null);
+      if (session?.token) {
         try {
           const userData = await sb.getUser(session.token);
           if (userData?.id) {
@@ -1800,21 +2078,23 @@ export default function App() {
             setUser({ id:userData.id, token:session.token, ...(profiles[0]||{}) });
             setToken(session.token);
             setAuthStage("app");
-            await loadReviews(session.token);
             await loadNotifs(session.token, userData.id);
-          } else { saveSession(null); setAuthStage("login"); }
-        } catch { setAuthStage("login"); }
-        setAppLoading(false);
-      })();
-    } else { setAppLoading(false); }
+          } else { saveSession(null); setAuthStage("app"); }
+        } catch { setAuthStage("app"); }
+      } else {
+        setAuthStage("app");
+      }
+      setAppLoading(false);
+    })();
   },[]);
 
   const loadReviews = async (tok) => {
     try {
-      const data = await sb.query("reviews","?select=*,profiles(name,tier)&order=created_at.desc&limit=50",tok);
+      const data = await sb.query("reviews","?select=*,profiles(name,tier),locations(name)&order=created_at.desc&limit=50",tok);
       if (Array.isArray(data) && data.length>0) {
         setReviews(data.map(r=>({
-          id:r.id, locationId:r.location_id, locationName:r.location_id||"Unknown",
+          id:r.id, locationId:r.location_id,
+          locationName:r.locations?.name || r.location_id || "Unknown Location",
           userId:r.user_id, userName:r.profiles?.name||"User", userTier:r.profiles?.tier||"bronze",
           foodItem:r.food_item, rating:r.rating, text:r.text,
           images:r.images||[], image:(r.images||[])[0]||IMGS[0],
@@ -1861,28 +2141,54 @@ export default function App() {
     showToast("Profile updated!");
   };
 
-  const handleAgree = async (reviewId) => {
-    if (!token||!user) return;
+  const handleAgree = async (reviewId, currentVote) => {
+    if (!token||!user) { setAuth("login"); return; }
     try {
-      await sb.insert("votes",{review_id:reviewId,user_id:user.id,vote_type:"agree"},token);
-      setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,agrees:r.agrees+1}:r));
-      const rev=reviews.find(r=>r.id===reviewId);
-      if (rev&&rev.userId!==user.id) await sb.insert("notifications",{user_id:rev.userId,from_user_id:user.id,from_user_name:user.name,type:"agree",review_id:reviewId,review_snippet:(rev.text||"").slice(0,40)},token).catch(()=>{});
+      if (currentVote === "agree") {
+        // Undo agree
+        await sb.delete("votes", `review_id=eq.${reviewId}&user_id=eq.${user.id}`, token);
+        setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,agrees:Math.max(0,r.agrees-1)}:r));
+      } else {
+        if (currentVote === "disagree") {
+          // Switch from disagree to agree
+          await sb.update("votes", `review_id=eq.${reviewId}&user_id=eq.${user.id}`, {vote_type:"agree"}, token);
+          setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,agrees:r.agrees+1,disagrees:Math.max(0,r.disagrees-1)}:r));
+        } else {
+          // New agree vote
+          await sb.insert("votes",{review_id:reviewId,user_id:user.id,vote_type:"agree"},token);
+          setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,agrees:r.agrees+1}:r));
+        }
+        const rev=reviews.find(r=>r.id===reviewId);
+        if (rev&&rev.userId!==user.id) await sb.insert("notifications",{user_id:rev.userId,from_user_id:user.id,from_user_name:user.name,type:"agree",review_id:reviewId,review_snippet:(rev.text||"").slice(0,40)},token).catch(()=>{});
+      }
     } catch {}
   };
 
-  const handleDisagree = async (reviewId) => {
-    if (!token||!user) return;
+  const handleDisagree = async (reviewId, currentVote) => {
+    if (!token||!user) { setAuth("login"); return; }
     try {
-      await sb.insert("votes",{review_id:reviewId,user_id:user.id,vote_type:"disagree"},token);
-      setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,disagrees:r.disagrees+1}:r));
-      const rev=reviews.find(r=>r.id===reviewId);
-      if (rev&&rev.userId!==user.id) await sb.insert("notifications",{user_id:rev.userId,from_user_id:user.id,from_user_name:user.name,type:"disagree",review_id:reviewId,review_snippet:(rev.text||"").slice(0,40)},token).catch(()=>{});
+      if (currentVote === "disagree") {
+        // Undo disagree
+        await sb.delete("votes", `review_id=eq.${reviewId}&user_id=eq.${user.id}`, token);
+        setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,disagrees:Math.max(0,r.disagrees-1)}:r));
+      } else {
+        if (currentVote === "agree") {
+          // Switch from agree to disagree
+          await sb.update("votes", `review_id=eq.${reviewId}&user_id=eq.${user.id}`, {vote_type:"disagree"}, token);
+          setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,disagrees:r.disagrees+1,agrees:Math.max(0,r.agrees-1)}:r));
+        } else {
+          // New disagree vote
+          await sb.insert("votes",{review_id:reviewId,user_id:user.id,vote_type:"disagree"},token);
+          setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,disagrees:r.disagrees+1}:r));
+        }
+        const rev=reviews.find(r=>r.id===reviewId);
+        if (rev&&rev.userId!==user.id) await sb.insert("notifications",{user_id:rev.userId,from_user_id:user.id,from_user_name:user.name,type:"disagree",review_id:reviewId,review_snippet:(rev.text||"").slice(0,40)},token).catch(()=>{});
+      }
     } catch {}
   };
 
   const handleAddComment = async (reviewId, text, parentId=null) => {
-    if (!token||!user) return;
+    if (!token||!user) { setAuth("login"); return; }
     try {
       const result = await sb.insert("comments",{review_id:reviewId,user_id:user.id,parent_id:parentId,text},token);
       const nc={id:result[0]?.id||Date.now().toString(),userId:user.id,user:user.name,userTier:user.tier,text,date:new Date().toISOString(),replies:[]};
@@ -1910,7 +2216,7 @@ export default function App() {
       }
       if (data.locationId) await sb.insert("locations",{id:data.locationId,name:data.locationName,address:""}, token).catch(()=>{});
       const result=await sb.insert("reviews",{user_id:user.id,location_id:data.locationId,food_item:data.foodItem,rating:data.rating,text:data.text,images:uploadedUrls.length>0?uploadedUrls:data.images,categories:data.categories,verified:false},token);
-      const newReview={id:result[0]?.id||Date.now().toString(),locationId:data.locationId,locationName:data.locationName,userId:user.id,userName:user.name,userTier:user.tier,foodItem:data.foodItem,rating:data.rating,text:data.text,images:uploadedUrls.length>0?uploadedUrls:data.images,image:(uploadedUrls[0]||data.images?.[0]),categories:data.categories,verified:false,agrees:0,disagrees:0,comments:[],reactions:{},date:new Date().toISOString()};
+      const newReview={id:result[0]?.id||Date.now().toString(),locationId:data.locationId,locationName:data.locationName||data.locationId,userId:user.id,userName:user.name,userTier:user.tier,foodItem:data.foodItem,rating:data.rating,text:data.text,images:uploadedUrls.length>0?uploadedUrls:data.images,image:(uploadedUrls[0]||data.images?.[0]),categories:data.categories,verified:false,agrees:0,disagrees:0,comments:[],reactions:{},date:new Date().toISOString()};
       setReviews(rs=>[newReview,...rs]);
       showToast("Posted!");
     } catch { showToast("Could not post review."); }
@@ -1957,28 +2263,45 @@ export default function App() {
         ::-webkit-scrollbar{width:0}
       `}</style>
 
-      {authStage==="splash"&&<SplashScreen onDone={()=>setAuth("login")}/>}
-      {authStage==="login"&&<LoginScreen onLogin={handleLogin} onGoSignUp={()=>setAuth("signup")}/>}
+      {authStage==="login"&&<LoginScreen onLogin={handleLogin} onGoSignUp={()=>setAuth("signup")} onClose={()=>setAuth("app")}/>}
       {authStage==="signup"&&<SignUpScreen onSignUp={handleSignUp} onGoLogin={()=>setAuth("login")}/>}
 
       {authStage==="app"&&<>
         <div style={{ background:R, height:56, display:"flex", alignItems:"center", padding:"0 16px", justifyContent:"space-between", flexShrink:0, zIndex:20 }}>
           <McRateLogo size={32} onRed/>
-          <button onClick={()=>setShowNotifs(true)} style={{ position:"relative", background:"rgba(255,255,255,0.15)", border:"none", color:W, width:38, height:38, borderRadius:"50%", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <Bell size={18} color={W} strokeWidth={2}/>
-            {unread>0&&<div style={{ position:"absolute", top:2, right:2, background:Y, color:DARK, borderRadius:"50%", width:18, height:18, fontSize:11, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", border:`2px solid ${R}` }}>{unread}</div>}
-          </button>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            {!user && (
+              <button onClick={()=>setAuth("login")} style={{ background:Y, color:DARK, border:"none", borderRadius:50, padding:"7px 16px", fontWeight:700, fontSize:13, cursor:"pointer" }}>
+                Log In
+              </button>
+            )}
+            {user && (
+              <button onClick={()=>setShowNotifs(true)} style={{ position:"relative", background:"rgba(255,255,255,0.15)", border:"none", color:W, width:38, height:38, borderRadius:"50%", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <Bell size={18} color={W} strokeWidth={2}/>
+                {unread>0&&<div style={{ position:"absolute", top:2, right:2, background:Y, color:DARK, borderRadius:"50%", width:18, height:18, fontSize:11, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", border:`2px solid ${R}` }}>{unread}</div>}
+              </button>
+            )}
+          </div>
         </div>
         <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
           {tab==="home"&&<FeedTab reviews={reviews} user={currentUser} onAgree={handleAgree} onDisagree={handleDisagree} onAddComment={handleAddComment} onReact={handleReact} onOpenUser={handleOpenUser}/>}
           {tab==="bestworst"&&<BestWorstTab reviews={reviews} locations={MOCK_LOCATIONS} onOpenLocation={setLocationPage} onOpenMenuItem={setMenuItemPage}/>}
-          {tab==="journey"&&<JourneyTab reviews={reviews} locations={MOCK_LOCATIONS} onOpenLocation={setLocationPage}/>}
-          {tab==="profile"&&<ProfileTab user={currentUser} reviews={reviews} onLogout={handleLogout} onUpdateUser={handleUpdateUser}/>}
+          {tab==="journey"&&<JourneyTab reviews={reviews} onOpenLocation={setLocationPage}/>}
+          {tab==="profile"&&(user
+            ? <ProfileTab user={currentUser} reviews={reviews} onLogout={handleLogout} onUpdateUser={handleUpdateUser}/>
+            : <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:32, gap:20, background:BG }}>
+                <User size={64} color={LG}/>
+                <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:28, letterSpacing:2, color:DARK, textAlign:"center" }}>YOUR PROFILE</div>
+                <div style={{ fontSize:15, color:GRAY, textAlign:"center", lineHeight:1.6 }}>Create an account to track your reviews, earn badges, and build your reviewer reputation.</div>
+                <button onClick={()=>setAuth("signup")} style={{ background:R, color:W, border:"none", borderRadius:50, padding:"14px 0", fontWeight:700, fontSize:16, cursor:"pointer", width:"100%", fontFamily:"inherit" }}>Create Account</button>
+                <button onClick={()=>setAuth("login")} style={{ background:W, color:DARK, border:`1.5px solid ${LG}`, borderRadius:50, padding:"13px 0", fontWeight:700, fontSize:15, cursor:"pointer", width:"100%", fontFamily:"inherit" }}>Log In</button>
+              </div>
+          )}
         </div>
         <div style={{ background:W, borderTop:`1px solid ${LG}`, display:"flex", height:64, flexShrink:0, zIndex:20, position:"relative", alignItems:"center", padding:"0 4px" }}>
           {TABS.map(t=>t.id==="add"?(
             <div key="add" style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <button onClick={()=>{setAddPostLocation(null);setShowAddPost(true);}} style={{ width:48, height:48, borderRadius:16, background:R, border:"none", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", boxShadow:"0 6px 20px rgba(218,41,28,0.5)", transform:"translateY(-14px)" }}>
+              <button onClick={()=>{ if(!user){setAuth("login");return;} setAddPostLocation(null);setShowAddPost(true);}} style={{ width:48, height:48, borderRadius:16, background:R, border:"none", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", boxShadow:"0 6px 20px rgba(218,41,28,0.5)", transform:"translateY(-14px)" }}>
                 <Plus size={26} color={W} strokeWidth={2.2}/>
               </button>
             </div>
