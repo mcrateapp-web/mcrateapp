@@ -668,7 +668,7 @@ function LocationSearch({ onSelect, defaultLocation }) {
     if (GOOGLE_API_KEY === "YOUR_GOOGLE_PLACES_API_KEY") { setNoApiKey(true); return; }
     if (window.google?.maps?.places) { setApiReady(true); return; }
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry,directions`;
     script.async = true;
     script.onload = () => setApiReady(true);
     script.onerror = () => setNoApiKey(true);
@@ -1227,14 +1227,17 @@ function JourneyTab({ reviews, onOpenLocation }) {
 
   // Load Google Maps script if not already loaded
   useEffect(() => {
-    if (window.google?.maps) { setMapReady(true); return; }
+    if (window.google?.maps?.DirectionsService) { setMapReady(true); return; }
     const existing = document.querySelector('script[src*="maps.googleapis.com"]');
     if (existing) {
-      existing.addEventListener('load', () => setMapReady(true));
-      return;
+      // Script already in DOM — wait for it
+      const check = setInterval(() => {
+        if (window.google?.maps?.DirectionsService) { setMapReady(true); clearInterval(check); }
+      }, 100);
+      return () => clearInterval(check);
     }
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry,directions`;
     script.async = true;
     script.onload = () => setMapReady(true);
     document.head.appendChild(script);
@@ -1294,8 +1297,9 @@ function JourneyTab({ reviews, onOpenLocation }) {
 
   const findRoute = async () => {
     if (!fromPlace || !toPlace) { setError("Please select both start and end points from the suggestions"); return; }
+    if (!window.google?.maps?.DirectionsService) { setError("Maps still loading — please try again in a moment"); return; }
     setLoading(true); setError(""); setResults(null);
-    if (mapInstanceRef.current) { mapInstanceRef.current = null; }
+    mapInstanceRef.current = null;
 
     try {
       const directionsService = new window.google.maps.DirectionsService();
