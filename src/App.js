@@ -655,7 +655,7 @@ function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, on
 
 // ─── Google Places API Key ────────────────────────────────────────────────────
 // Replace this with your Google Places API key
-const GOOGLE_API_KEY = "YOUR_GOOGLE_PLACES_API_KEY";
+const GOOGLE_API_KEY = "AIzaSyC5JTlsROiy7RM6OXVzYJxMK8NxCSCwXpY";
 
 // ─── Location Search (Google Places Autocomplete) ─────────────────────────────
 function LocationSearch({ onSelect, defaultLocation }) {
@@ -672,7 +672,7 @@ function LocationSearch({ onSelect, defaultLocation }) {
 
   // Load Google Places script once
   useEffect(() => {
-    if (GOOGLE_API_KEY === "YOUR_GOOGLE_PLACES_API_KEY") { setNoApiKey(true); return; }
+    if (GOOGLE_API_KEY === "AIzaSyC5JTlsROiy7RM6OXVzYJxMK8NxCSCwXpY") { setNoApiKey(true); return; }
     if (window.google?.maps?.places) { setApiReady(true); return; }
     const script = document.createElement("script");
     script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places`;
