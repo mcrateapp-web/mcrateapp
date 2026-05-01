@@ -2208,9 +2208,26 @@ export default function App() {
   // Restore session on mount — load reviews regardless of auth state
   useEffect(()=>{
     const session = loadSession();
+    // Safety timeout — never stay on loading screen more than 5 seconds
+    const timeout = setTimeout(() => setAppLoading(false), 5000);
     (async ()=>{
-      // Always load reviews so guests can browse
-      await loadReviews(session?.token || null);
+      try {
+        // Load reviews inline so there's no closure issue
+        const reviewData = await sb.query("reviews","?select=*,profiles(name,tier),locations(name)&order=created_at.desc&limit=50", session?.token||null);
+        if (Array.isArray(reviewData) && reviewData.length>0) {
+          setReviews(reviewData.map(r=>({
+            id:r.id, locationId:r.location_id,
+            locationName:r.locations?.name || r.location_id || "Unknown Location",
+            userId:r.user_id, userName:r.profiles?.name||"User", userTier:r.profiles?.tier||"bronze",
+            foodItem:r.food_item, rating:r.rating, text:r.text,
+            images:r.images||[], image:(r.images||[])[0]||IMGS[0],
+            verified:r.verified, categories:r.categories||{},
+            agrees:r.agrees, disagrees:r.disagrees,
+            comments:[], reactions:{}, date:r.created_at,
+          })));
+        }
+      } catch {}
+
       if (session?.token) {
         try {
           const userData = await sb.getUser(session.token);
@@ -2225,6 +2242,7 @@ export default function App() {
       } else {
         setAuthStage("app");
       }
+      clearTimeout(timeout);
       setAppLoading(false);
     })();
   },[]);
