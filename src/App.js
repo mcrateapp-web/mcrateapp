@@ -663,16 +663,15 @@ function LocationSearch({ onSelect, defaultLocation }) {
   const debounceRef = useRef(null);
   const sessionToken = useRef(Math.random().toString(36).slice(2));
 
-  // Load Google Places script once
+  // Use Maps script loaded at app level
   useEffect(() => {
     if (GOOGLE_API_KEY === "YOUR_GOOGLE_PLACES_API_KEY") { setNoApiKey(true); return; }
     if (window.google?.maps?.places) { setApiReady(true); return; }
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry,directions`;
-    script.async = true;
-    script.onload = () => setApiReady(true);
-    script.onerror = () => setNoApiKey(true);
-    document.head.appendChild(script);
+    // Poll until Maps is ready (loaded at app level)
+    const check = setInterval(() => {
+      if (window.google?.maps?.places) { setApiReady(true); clearInterval(check); }
+    }, 100);
+    return () => clearInterval(check);
   }, []);
 
   // Close on outside click
@@ -712,6 +711,7 @@ function LocationSearch({ onSelect, defaultLocation }) {
       const loc = {
         id: place.place_id,
         name: place.name,
+        fullName: `${place.name}${place.formatted_address ? ', ' + place.formatted_address.split(',').slice(1,2).join('').trim() : ''}`,
         address: place.formatted_address,
         lat: place.geometry?.location?.lat(),
         lng: place.geometry?.location?.lng(),
@@ -842,7 +842,7 @@ function AddPostFlow({ onClose, onSubmit, locations, defaultLocationId }) {
 
   const submit = () => {
     if (!rating || !selectedLocation || images.length === 0) return;
-    onSubmit({ locationId:selectedLocation.id||selectedLocation.name, locationName:selectedLocation.name, foodItem, rating, categories:cats, text, images, image:images[0], verified:false });
+    onSubmit({ locationId:selectedLocation.id||selectedLocation.name, locationName:selectedLocation.fullName||selectedLocation.name, locationAddress:selectedLocation.address||"", foodItem, rating, categories:cats, text, images, image:images[0], verified:false });
     onClose();
   };
 
@@ -1018,7 +1018,7 @@ function MenuItemPage({ item, reviews, onBack, onAddComment, onReact, currentUse
 }
 
 // ─── Rankings Tab ─────────────────────────────────────────────────────────────
-function BestWorstTab({ reviews, locations, onOpenLocation, onOpenMenuItem }) {
+function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
   const [scope, setScope] = useState("local");
   const [view, setView] = useState("locations");
   const [userCoords, setUserCoords] = useState(null);
@@ -1027,6 +1027,8 @@ function BestWorstTab({ reviews, locations, onOpenLocation, onOpenMenuItem }) {
   const [showMoreWorst, setShowMoreWorst] = useState(10);
   const [showMoreBest, setShowMoreBest] = useState(10);
   const [showMoreLocal, setShowMoreLocal] = useState(10);
+  const [nearbyPlaces, setNearbyPlaces] = useState([]);
+  const [loadingNearby, setLoadingNearby] = useState(false);
 
   // Haversine distance in km
   const calcDistance = (lat1, lng1, lat2, lng2) => {
@@ -1042,31 +1044,87 @@ function BestWorstTab({ reviews, locations, onOpenLocation, onOpenMenuItem }) {
     if (!navigator.geolocation) { setLocError(true); return; }
     setLocating(true); setLocError(false);
     navigator.geolocation.getCurrentPosition(
-      pos => { setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocating(false); },
+      pos => {
+        setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocating(false);
+        fetchNearby(pos.coords.latitude, pos.coords.longitude);
+      },
       () => { setLocError(true); setLocating(false); }
     );
   };
 
-  useEffect(() => { if (scope === "local") getLocation(); }, [scope]);
+  // Fetch real nearby McDonald's from Google Places - closest 8 regardless of distance
+  const fetchNearby = (lat, lng) => {
+    if (!window.google?.maps?.places) return;
+    setLoadingNearby(true);
+    const service = new window.google.maps.places.PlacesService(document.createElement("div"));
+    service.nearbySearch({
+      location: { lat, lng },
+      rankBy: window.google.maps.places.RankBy.DISTANCE,
+      keyword: "McDonald's",
+      type: "restaurant"
+    }, (results, status) => {
+      if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+        const mcds = results
+          .filter(p => p.name.toLowerCase().includes("mcdonald"))
+          .slice(0, 8)
+          .map(p => ({
+            id: p.place_id,
+            name: p.name,
+            address: p.vicinity,
+            lat: p.geometry.location.lat(),
+            lng: p.geometry.location.lng(),
+          }));
+        setNearbyPlaces(mcds);
+      }
+      setLoadingNearby(false);
+    });
+  };
 
-  const getAvg = id => { const r=reviews.filter(x=>x.locationId===id); if(!r.length) return null; return { avg:(r.reduce((a,x)=>a+x.rating,0)/r.length).toFixed(1), count:r.length }; };
+  useEffect(() => {
+    if (scope === "local") getLocation();
+  }, [scope]);
 
-  // All locations with distance, including unrated ones
-  const allLocData = locations.map(l => {
-    const stats = getAvg(l.id);
-    const dist = userCoords && l.lat && l.lng ? calcDistance(userCoords.lat, userCoords.lng, l.lat, l.lng) : l.distance;
-    return { ...l, ...(stats||{}), distance: dist, hasReviews: !!stats };
+  // Also try to fetch nearby when Maps loads
+  useEffect(() => {
+    if (userCoords && window.google?.maps?.places && nearbyPlaces.length === 0) {
+      fetchNearby(userCoords.lat, userCoords.lng);
+    }
+  }, [userCoords]);
+
+  // Build location stats from real reviews
+  const getStats = id => {
+    const r = reviews.filter(x => x.locationId === id);
+    if (!r.length) return null;
+    return { avg:(r.reduce((a,x)=>a+x.rating,0)/r.length).toFixed(1), count:r.length };
+  };
+
+  // Global: build from real reviews grouped by location
+  const locationMap = {};
+  reviews.forEach(r => {
+    if (!locationMap[r.locationId]) {
+      locationMap[r.locationId] = { id:r.locationId, name:r.locationName||r.locationId, address:"", ratings:[] };
+    }
+    locationMap[r.locationId].ratings.push(r.rating);
+    if (r.locationName) locationMap[r.locationId].name = r.locationName;
   });
+  const globalLocData = Object.values(locationMap).map(l => ({
+    ...l,
+    avg: (l.ratings.reduce((a,b)=>a+b,0)/l.ratings.length).toFixed(1),
+    count: l.ratings.length,
+    hasReviews: true,
+    distance: userCoords && l.lat && l.lng ? calcDistance(userCoords.lat, userCoords.lng, l.lat, l.lng) : "?"
+  }));
 
-  // Rated locations only for global rankings
-  const locData = allLocData.filter(l => l.hasReviews);
+  // Local: real nearby places from Google, enriched with McRate reviews
+  const localLocData = nearbyPlaces.map(l => {
+    const stats = getStats(l.id);
+    const dist = userCoords ? calcDistance(userCoords.lat, userCoords.lng, l.lat, l.lng) : "?";
+    return { ...l, ...(stats||{}), distance:dist, hasReviews:!!stats };
+  }).sort((a,b) => parseFloat(a.distance) - parseFloat(b.distance));
 
-  // Local: ALL locations sorted by distance
-  const sorted = [...allLocData].sort((a,b) => parseFloat(a.distance) - parseFloat(b.distance));
-
-  // Global: rated only, sorted by rating
-  const best = [...locData].sort((a,b)=>parseFloat(b.avg)-parseFloat(a.avg));
-  const worst = [...locData].sort((a,b)=>parseFloat(a.avg)-parseFloat(b.avg));
+  const best = [...globalLocData].sort((a,b)=>parseFloat(b.avg)-parseFloat(a.avg));
+  const worst = [...globalLocData].sort((a,b)=>parseFloat(a.avg)-parseFloat(b.avg));
 
   const itemRatings = {};
   reviews.forEach(r=>{ if(!itemRatings[r.foodItem]) itemRatings[r.foodItem]=[]; itemRatings[r.foodItem].push(r.rating); });
@@ -1135,20 +1193,24 @@ function BestWorstTab({ reviews, locations, onOpenLocation, onOpenMenuItem }) {
                 <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:18, letterSpacing:1.5, color:DARK, marginBottom:10, display:"flex", alignItems:"center", gap:8 }}>
                   <MapPin size={16} color={DARK}/> NEAREST TO YOU
                 </div>
-                {sorted.slice(0,showMoreLocal).map((loc,i)=><LocCard key={loc.id} loc={loc} rank={i+1} isBest={null} showDistance={true}/>)}
-                {sorted.length>showMoreLocal&&(
+                {loadingNearby && <div style={{ textAlign:"center", padding:"20px 0", color:GRAY, fontSize:14 }}>Finding nearby McDonald's…</div>}
+                {!loadingNearby && localLocData.length === 0 && !locError && userCoords && (
+                  <div style={{ textAlign:"center", padding:"20px 0", color:GRAY, fontSize:14 }}>No nearby McDonald's found. Try allowing location access.</div>
+                )}
+                {localLocData.slice(0,showMoreLocal).map((loc,i)=><LocCard key={loc.id} loc={loc} rank={i+1} isBest={null} showDistance={true}/>)}
+                {localLocData.length>showMoreLocal&&(
                   <button onClick={()=>setShowMoreLocal(v=>v+10)} style={{ width:"100%", background:LG, border:"none", borderRadius:12, padding:"10px 0", fontWeight:700, fontSize:14, cursor:"pointer", color:DARK, marginBottom:16 }}>
-                    Show More ({sorted.length-showMoreLocal} remaining)
+                    Show More ({localLocData.length-showMoreLocal} remaining)
                   </button>
                 )}
                 <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:18, letterSpacing:1.5, color:"#8b5cf6", margin:"20px 0 10px" }}>💎 HIDDEN GEMS</div>
-                {sorted.filter(l=>parseInt(l.count)<3&&parseFloat(l.avg)>=4).map(loc=>(
+                {localLocData.filter(l=>l.hasReviews&&parseInt(l.count)<3&&parseFloat(l.avg)>=4).map(loc=>(
                   <div key={loc.id} onClick={()=>onOpenLocation(loc)} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px", background:W, borderRadius:16, marginBottom:8, borderLeft:"4px solid #8b5cf6", cursor:"pointer" }}>
                     <div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:15 }}>{loc.name}</div><div style={{ fontSize:12, color:GRAY }}>Only {loc.count} review{loc.count!==1?"s":""} — be first!</div><Stars n={parseFloat(loc.avg)} size={13}/></div>
                     <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:28, color:"#8b5cf6" }}>{loc.avg}</div>
                   </div>
                 ))}
-                {sorted.filter(l=>parseInt(l.count)<3&&parseFloat(l.avg)>=4).length===0&&<div style={{ fontSize:14, color:GRAY, textAlign:"center" }}>No hidden gems yet!</div>}
+                {localLocData.filter(l=>l.hasReviews&&parseInt(l.count)<3&&parseFloat(l.avg)>=4).length===0&&<div style={{ fontSize:14, color:GRAY, textAlign:"center" }}>No hidden gems yet!</div>}
               </>
             ) : (
               <>
@@ -1225,22 +1287,13 @@ function JourneyTab({ reviews, onOpenLocation }) {
   const fromACRef = useRef(null);
   const toACRef = useRef(null);
 
-  // Load Google Maps script if not already loaded
+  // Wait for Maps script loaded at app level
   useEffect(() => {
     if (window.google?.maps?.DirectionsService) { setMapReady(true); return; }
-    const existing = document.querySelector('script[src*="maps.googleapis.com"]');
-    if (existing) {
-      // Script already in DOM — wait for it
-      const check = setInterval(() => {
-        if (window.google?.maps?.DirectionsService) { setMapReady(true); clearInterval(check); }
-      }, 100);
-      return () => clearInterval(check);
-    }
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry,directions`;
-    script.async = true;
-    script.onload = () => setMapReady(true);
-    document.head.appendChild(script);
+    const check = setInterval(() => {
+      if (window.google?.maps?.DirectionsService) { setMapReady(true); clearInterval(check); }
+    }, 100);
+    return () => clearInterval(check);
   }, []);
 
   // Set up autocomplete on inputs
@@ -1457,7 +1510,7 @@ function JourneyTab({ reviews, onOpenLocation }) {
             </span>
             <input
               ref={fromInputRef}
-              value={fromText}
+              defaultValue={fromText}
               onChange={e => { setFromText(e.target.value); setFromPlace(null); }}
               placeholder="Starting point…"
               style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}
@@ -1476,7 +1529,7 @@ function JourneyTab({ reviews, onOpenLocation }) {
             </span>
             <input
               ref={toInputRef}
-              value={toText}
+              defaultValue={toText}
               onChange={e => { setToText(e.target.value); setToPlace(null); }}
               placeholder="Destination…"
               style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}
@@ -1802,7 +1855,37 @@ function ProfileTab({ user, reviews, onLogout, onUpdateUser, onOpenLocation, tok
   );
 }
 
-// ─── Splash Screen ────────────────────────────────────────────────────────────
+// ─── Onboarding Infographic ───────────────────────────────────────────────────
+function OnboardingSlide({ onDone }) {
+  const [page, setPage] = useState(0);
+  const slides = [
+    { icon: <Camera size={56} color={W}/>, title:"Post Your Meal", body:"Take a photo of your McDonald's order and rate it 1–5 stars. Be honest — the community is watching." },
+    { icon: <ThumbsUp size={56} color={W}/>, title:"Agree or Disagree", body:"See someone's review? Tell them if you agree with their rating. Community trust drives the rankings." },
+    { icon: <Trophy size={56} color={W}/>, title:"Climb the Ranks", body:"The more you review, the higher your tier. Bronze → Silver → Gold. Earn badges along the way." },
+    { icon: <MapPin size={56} color={W}/>, title:"Find the Best Near You", body:"Rankings show the best and worst McDonald's near you. Journey finds Maccas along any route." },
+  ];
+  const s = slides[page];
+  return (
+    <div style={{ position:"fixed", inset:0, background:R, zIndex:900, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:32, maxWidth:480, margin:"0 auto" }}>
+      <div style={{ marginBottom:32 }}>{s.icon}</div>
+      <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:36, color:Y, letterSpacing:2, textAlign:"center", marginBottom:16 }}>{s.title}</div>
+      <div style={{ fontSize:16, color:"rgba(255,255,255,0.85)", textAlign:"center", lineHeight:1.7, marginBottom:40 }}>{s.body}</div>
+      <div style={{ display:"flex", gap:8, marginBottom:32 }}>
+        {slides.map((_,i) => <div key={i} style={{ width:i===page?24:8, height:8, borderRadius:4, background:i===page?Y:"rgba(255,255,255,0.3)", transition:"all 0.2s" }}/>)}
+      </div>
+      <div style={{ display:"flex", gap:12, width:"100%" }}>
+        {page < slides.length - 1 ? (
+          <>
+            <button onClick={onDone} style={{ flex:1, background:"rgba(255,255,255,0.15)", color:W, border:"none", borderRadius:50, padding:"14px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit" }}>Skip</button>
+            <button onClick={()=>setPage(p=>p+1)} style={{ flex:2, background:Y, color:DARK, border:"none", borderRadius:50, padding:"14px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit" }}>Next →</button>
+          </>
+        ) : (
+          <button onClick={onDone} style={{ flex:1, background:Y, color:DARK, border:"none", borderRadius:50, padding:"14px 0", fontWeight:700, fontSize:16, cursor:"pointer", fontFamily:"inherit" }}>Let's Go! 🍔</button>
+        )}
+      </div>
+    </div>
+  );
+}
 function SplashScreen({ onDone }) {
   useEffect(() => { const t = setTimeout(onDone, 2200); return () => clearTimeout(t); }, []);
   return (
@@ -1897,11 +1980,13 @@ function LoginScreen({ onLogin, onGoSignUp, onClose }) {
         </div>
 
         {/* Social login */}
-        <button onClick={()=>handleLogin()} style={{ background:W, color:DARK, border:`1.5px solid ${LG}`, borderRadius:50, padding:"13px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-          <span style={{ fontSize:20 }}>🍎</span> Continue with Apple
+        <button onClick={()=>handleLogin()} style={{ background:DARK, color:W, border:"none", borderRadius:50, padding:"13px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="white"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          Continue with Apple
         </button>
         <button onClick={()=>handleLogin()} style={{ background:W, color:DARK, border:`1.5px solid ${LG}`, borderRadius:50, padding:"13px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-          <span style={{ fontSize:20 }}>🌐</span> Continue with Google
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Continue with Google
         </button>
 
         <div style={{ textAlign:"center", fontSize:14, color:GRAY, marginTop:8 }}>
@@ -2018,11 +2103,13 @@ function SignUpScreen({ onSignUp, onGoLogin }) {
             <div style={{ flex:1, height:1, background:LG }}/>
           </div>
 
-          <button onClick={()=>handleCreate()} style={{ background:W, color:DARK, border:`1.5px solid ${LG}`, borderRadius:50, padding:"13px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-            <span style={{ fontSize:20 }}>🍎</span> Continue with Apple
+          <button onClick={()=>handleCreate()} style={{ background:DARK, color:W, border:"none", borderRadius:50, padding:"13px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="white"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+            Continue with Apple
           </button>
           <button onClick={()=>handleCreate()} style={{ background:W, color:DARK, border:`1.5px solid ${LG}`, borderRadius:50, padding:"13px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-            <span style={{ fontSize:20 }}>🌐</span> Continue with Google
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+            Continue with Google
           </button>
 
           <div style={{ textAlign:"center", fontSize:14, color:GRAY }}>
@@ -2094,11 +2181,29 @@ export default function App() {
   const [menuItemPage, setMenuItemPage] = useState(null);
   const [userProfilePage, setUserProfilePage] = useState(null);
   const [showNotifs, setShowNotifs] = useState(false);
-  const [toast, setToast] = useState(null);
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try {
+      const visits = parseInt(localStorage.getItem("mcrate_visits") || "0");
+      const newVisits = visits + 1;
+      localStorage.setItem("mcrate_visits", newVisits);
+      return newVisits <= 3;
+    } catch { return false; }
+  });
 
   const showToast = msg => { setToast(msg); setTimeout(()=>setToast(null),2500); };
   const unread = notifications.filter(n=>!n.read).length;
   const setAuth = stage => { setAuthStage(stage); saveAuthStage(stage); };
+
+  // Load Google Maps once at app level with ALL required libraries
+  useEffect(() => {
+    if (window.google?.maps?.DirectionsService) return;
+    if (document.querySelector('script[src*="maps.googleapis.com"]')) return;
+    if (GOOGLE_API_KEY === "YOUR_GOOGLE_PLACES_API_KEY") return;
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry,directions`;
+    script.async = true;
+    document.head.appendChild(script);
+  }, []);
 
   // Restore session on mount — load reviews regardless of auth state
   useEffect(()=>{
@@ -2250,7 +2355,7 @@ export default function App() {
         const url=await sb.uploadPhoto(data.images[i],path,token);
         if (url) uploadedUrls.push(url);
       }
-      if (data.locationId) await sb.insert("locations",{id:data.locationId,name:data.locationName,address:""}, token).catch(()=>{});
+      if (data.locationId) await sb.insert("locations",{id:data.locationId, name:data.locationName||data.locationId, address:data.locationAddress||""}, token).catch(()=>{});
       const result=await sb.insert("reviews",{user_id:user.id,location_id:data.locationId,food_item:data.foodItem,rating:data.rating,text:data.text,images:uploadedUrls.length>0?uploadedUrls:data.images,categories:data.categories,verified:false},token);
       const newReview={id:result[0]?.id||Date.now().toString(),locationId:data.locationId,locationName:data.locationName||data.locationId,userId:user.id,userName:user.name,userTier:user.tier,foodItem:data.foodItem,rating:data.rating,text:data.text,images:uploadedUrls.length>0?uploadedUrls:data.images,image:(uploadedUrls[0]||data.images?.[0]),categories:data.categories,verified:false,agrees:0,disagrees:0,comments:[],reactions:{},date:new Date().toISOString()};
       setReviews(rs=>[newReview,...rs]);
@@ -2269,8 +2374,8 @@ export default function App() {
   };
 
   const handleOpenUser = (review) => {
-    if (review.userId===user?.id) { setTab("profile"); return; }
-    setUserProfilePage({userId:review.userId,userName:review.userName,userTier:review.userTier});
+    if (user && review.userId === user.id) { setTab("profile"); return; }
+    setUserProfilePage({ userId:review.userId, userName:review.userName, userTier:review.userTier });
   };
 
   const currentUser = user||{id:"guest",name:"You",tier:"bronze"};
@@ -2286,7 +2391,7 @@ export default function App() {
   if (appLoading) return (
     <div style={{ maxWidth:480, margin:"0 auto", height:"100vh", background:R, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16 }}>
       <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:80, color:Y, lineHeight:1 }}>M</div>
-      <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:28, color:W, letterSpacing:4 }}>McRATE</div>
+      <McRateLogo size={36} onRed/>
     </div>
   );
 
@@ -2299,7 +2404,7 @@ export default function App() {
         ::-webkit-scrollbar{width:0}
       `}</style>
 
-      {authStage==="login"&&<LoginScreen onLogin={handleLogin} onGoSignUp={()=>setAuth("signup")} onClose={()=>setAuth("app")}/>}
+      {showOnboarding && authStage==="app" && <OnboardingSlide onDone={()=>setShowOnboarding(false)}/>}
       {authStage==="signup"&&<SignUpScreen onSignUp={handleSignUp} onGoLogin={()=>setAuth("login")}/>}
 
       {authStage==="app"&&<>
@@ -2321,7 +2426,7 @@ export default function App() {
         </div>
         <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
           {tab==="home"&&<FeedTab reviews={reviews} user={currentUser} onAgree={handleAgree} onDisagree={handleDisagree} onAddComment={handleAddComment} onReact={handleReact} onOpenUser={handleOpenUser}/>}
-          {tab==="bestworst"&&<BestWorstTab reviews={reviews} locations={MOCK_LOCATIONS} onOpenLocation={setLocationPage} onOpenMenuItem={setMenuItemPage}/>}
+          {tab==="bestworst"&&<BestWorstTab reviews={reviews} onOpenLocation={setLocationPage} onOpenMenuItem={setMenuItemPage}/>}
           {tab==="journey"&&<JourneyTab reviews={reviews} onOpenLocation={setLocationPage}/>}
           {tab==="profile"&&(user
             ? <ProfileTab user={currentUser} reviews={reviews} onLogout={handleLogout} onUpdateUser={handleUpdateUser} onOpenLocation={setLocationPage} token={token}/>
