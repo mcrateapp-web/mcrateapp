@@ -235,7 +235,26 @@ function Toast({ msg }) {
   return <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background:DARK, color:W, padding:"10px 24px", borderRadius:50, fontSize:14, fontWeight:600, zIndex:9999, whiteSpace:"nowrap", boxShadow:"0 4px 20px rgba(0,0,0,0.3)", border:`2px solid ${Y}` }}>{msg}</div>;
 }
 
-// ─── McRate Logo ──────────────────────────────────────────────────────────────
+// ─── Swipe Back Hook ──────────────────────────────────────────────────────────
+function useSwipeBack(onBack) {
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
+  const handleTouchStart = e => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  };
+  const handleTouchEnd = e => {
+    if (touchStartX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    const dy = Math.abs(e.changedTouches[0].clientY - touchStartY.current);
+    // Only trigger if swipe is mostly horizontal and > 80px from left edge
+    if (dx > 80 && dy < 60 && touchStartX.current < 60) onBack();
+    touchStartX.current = null;
+  };
+  return { onTouchStart: handleTouchStart, onTouchEnd: handleTouchEnd };
+}
+
+
 function McRateLogo({ size = 28, onRed = false }) {
   const small = size * 0.72;
   const capsColor = onRed ? W : R;
@@ -278,7 +297,7 @@ function PhotoCarousel({ review }) {
   );
 }
 
-function CommentThread({ comment, onReply, depth=0 }) {
+function CommentThread({ comment, onReply, depth=0, onOpenUser }) {
   const [showReply, setShowReply] = useState(false);
   const [text, setText] = useState("");
   const [showReplies, setShowReplies] = useState(true);
@@ -289,10 +308,12 @@ function CommentThread({ comment, onReply, depth=0 }) {
   return (
     <div style={{ marginBottom:depth===0?12:0 }}>
       <div style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
-        <Avatar name={comment.user} size={depth===0?32:26} tier={comment.userTier} />
+        <button onClick={()=>onOpenUser&&onOpenUser({ userId:comment.userId, userName:comment.user, userTier:comment.userTier })} style={{ background:"none", border:"none", cursor:"pointer", padding:0, flexShrink:0 }}>
+          <Avatar name={comment.user} size={depth===0?32:26} tier={comment.userTier}/>
+        </button>
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ background:BG, borderRadius:"0 14px 14px 14px", padding:"8px 12px", display:"inline-block", maxWidth:"100%" }}>
-            <span style={{ fontWeight:700, fontSize:13, color:DARK }}>{comment.user} </span>
+            <button onClick={()=>onOpenUser&&onOpenUser({ userId:comment.userId, userName:comment.user, userTier:comment.userTier })} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontWeight:700, fontSize:13, color:DARK, fontFamily:"inherit" }}>{comment.user} </button>
             <span style={{ fontSize:13, color:"#333", lineHeight:1.4 }}>{comment.text}</span>
           </div>
           <div style={{ display:"flex", gap:12, alignItems:"center", marginTop:4, paddingLeft:4 }}>
@@ -310,7 +331,7 @@ function CommentThread({ comment, onReply, depth=0 }) {
           )}
           {showReplies&&replies.length>0&&(
             <div style={{ marginTop:8, paddingLeft:8, borderLeft:`2px solid ${LG}` }}>
-              {replies.map(r=><div key={r.id} style={{ marginBottom:8 }}><CommentThread comment={r} onReply={onReply} depth={depth+1}/></div>)}
+              {replies.map(r=><div key={r.id} style={{ marginBottom:8 }}><CommentThread comment={r} onReply={onReply} depth={depth+1} onOpenUser={onOpenUser}/></div>)}
             </div>
           )}
         </div>
@@ -320,7 +341,7 @@ function CommentThread({ comment, onReply, depth=0 }) {
 }
 
 // ─── Feed Post ────────────────────────────────────────────────────────────────
-function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onReact, onReport, onOpenUser }) {
+function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onReact, onReport, onOpenUser, onOpenLocation }) {
   const [showComments, setShowComments] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [commentText, setCommentText] = useState("");
@@ -377,7 +398,9 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
             {review.verified&&<span style={{ background:Y, color:DARK, fontSize:10, fontWeight:700, padding:"1px 6px", borderRadius:50, display:"flex", alignItems:"center", gap:3 }}><CheckCircle size={9} color={DARK}/>Verified</span>}
           </div>
           <div style={{ fontSize:12, color:GRAY, marginTop:1, display:"flex", alignItems:"center", gap:4 }}>
-            <MapPin size={11} color={GRAY}/> {review.locationName} · {review.foodItem}
+            <MapPin size={11} color={GRAY}/>
+            <button onClick={()=>onOpenLocation&&onOpenLocation({ id:review.locationId, name:review.locationName, address:"" })} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontSize:12, color:R, fontWeight:600, fontFamily:"inherit" }}>{review.locationName}</button>
+            <span>· {review.foodItem}</span>
           </div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -431,7 +454,7 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
       </div>
 
       {/* Caption */}
-      {review.text&&<div style={{ padding:"0 14px 8px", fontSize:14, color:"#222", lineHeight:1.5 }}><span style={{ fontWeight:700 }}>{review.userName} </span>{review.text}</div>}
+      {review.text&&<div style={{ padding:"0 14px 8px", fontSize:14, color:"#222", lineHeight:1.5 }}><button onClick={()=>onOpenUser&&onOpenUser(review)} style={{ fontWeight:700, background:"none", border:"none", cursor:"pointer", padding:0, fontSize:14, fontFamily:"inherit", color:DARK }}>{review.userName} </button>{review.text}</div>}
 
       {/* View comments toggle */}
       {total>0&&!showComments&&(
@@ -443,7 +466,7 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
       {/* Comments */}
       {showComments&&(
         <div style={{ padding:"0 14px 8px" }}>
-          {visible.map(c=><CommentThread key={c.id} comment={c} onReply={(parentId,text)=>onAddComment(review.id,text,parentId)}/>)}
+          {visible.map(c=><CommentThread key={c.id} comment={c} onReply={(parentId,text)=>onAddComment(review.id,text,parentId)} onOpenUser={onOpenUser}/>)}
           {(review.comments||[]).length>2&&!showAll&&(
             <button onClick={()=>setShowAll(true)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, color:GRAY, padding:"0 0 6px" }}>View all {total} comments</button>
           )}
@@ -464,11 +487,12 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
 
 // ─── User Profile Page ────────────────────────────────────────────────────────
 function UserProfilePage({ userId, userName, userTier, reviews, onBack }) {
+  const swipe = useSwipeBack(onBack);
   const userReviews = reviews.filter(r => r.userId === userId);
   const avg = userReviews.length ? (userReviews.reduce((a,r)=>a+r.rating,0)/userReviews.length).toFixed(1) : null;
   const totalAgrees = userReviews.reduce((a,r)=>a+(r.agrees||0),0);
   return (
-    <div style={{ position:"fixed", inset:0, background:BG, zIndex:400, display:"flex", flexDirection:"column", maxWidth:480, margin:"0 auto" }}>
+    <div style={{ position:"fixed", inset:0, background:BG, zIndex:400, display:"flex", flexDirection:"column", maxWidth:480, margin:"0 auto" }} {...swipe}>
       <div style={{ background:R, height:56, display:"flex", alignItems:"center", padding:"0 16px", gap:12, flexShrink:0 }}>
         <button onClick={onBack} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:W, width:32, height:32, borderRadius:"50%", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
           <ArrowLeft size={18} color={W}/>
@@ -541,7 +565,7 @@ function ReportModal({ review, onClose, onReport }) {
 }
 
 // ─── Feed Tab ─────────────────────────────────────────────────────────────────
-function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, onOpenUser }) {
+function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, onOpenUser, onOpenLocation, showOnboarding, onDismissOnboarding }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [showSearch, setShowSearch] = useState(false);
@@ -610,6 +634,7 @@ function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, on
       )}
 
       <div ref={scrollRef} style={{ flex:1, overflow:"auto" }} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        {showOnboarding && <OnboardingCard onDismiss={onDismissOnboarding}/>}
         {/* Search results empty */}
         {filtered.length===0 && search.trim() && (
           <div style={{ textAlign:"center", padding:"60px 20px", color:GRAY }}>
@@ -638,7 +663,7 @@ function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, on
           </div>
         )}
 
-        {filtered.map(r=><FeedPost key={r.id} review={r} currentUser={user} onAgree={(currentVote)=>onAgree(r.id,currentVote)} onDisagree={(currentVote)=>onDisagree(r.id,currentVote)} onAddComment={onAddComment} onReact={onReact} onReport={()=>setReportTarget(r)} onOpenUser={onOpenUser}/>)}
+        {filtered.map(r=><FeedPost key={r.id} review={r} currentUser={user} onAgree={(currentVote)=>onAgree(r.id,currentVote)} onDisagree={(currentVote)=>onDisagree(r.id,currentVote)} onAddComment={onAddComment} onReact={onReact} onReport={()=>setReportTarget(r)} onOpenUser={onOpenUser} onOpenLocation={onOpenLocation}/>)}
       </div>
 
       {reportTarget && <ReportModal review={reportTarget} onClose={()=>setReportTarget(null)} onReport={handleReport}/>}
@@ -805,6 +830,7 @@ function LocationSearch({ onSelect, defaultLocation }) {
 
 // ─── Add Post Flow ────────────────────────────────────────────────────────────
 function AddPostFlow({ onClose, onSubmit, locations, defaultLocationId }) {
+  const swipe = useSwipeBack(onClose);
   const [step, setStep] = useState("photo");
   const [images, setImages] = useState([]);
   const [previewIdx, setPreviewIdx] = useState(0);
@@ -849,7 +875,7 @@ function AddPostFlow({ onClose, onSubmit, locations, defaultLocationId }) {
   const canShare = rating && selectedLocation && images.length > 0;
 
   return (
-    <div style={{ position:"fixed", inset:0, background:W, zIndex:600, display:"flex", flexDirection:"column", maxWidth:480, margin:"0 auto" }}>
+    <div style={{ position:"fixed", inset:0, background:W, zIndex:600, display:"flex", flexDirection:"column", maxWidth:480, margin:"0 auto" }} {...swipe}>
       <div style={{ background:R, height:56, display:"flex", alignItems:"center", padding:"0 16px", gap:12, flexShrink:0 }}>
         <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:W, width:32, height:32, borderRadius:"50%", cursor:"pointer", fontSize:20, display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
         <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, color:Y, letterSpacing:1.5, flex:1 }}>{step==="photo"?"NEW POST":"ADD DETAILS"}</div>
@@ -936,6 +962,7 @@ function AddPostFlow({ onClose, onSubmit, locations, defaultLocationId }) {
 
 // ─── Notifications Panel ──────────────────────────────────────────────────────
 function NotificationsPanel({ notifications, onClose, onMarkRead }) {
+  const swipe = useSwipeBack(onClose);
   const icon = t => ({
     agree: <ThumbsUp size={18} color={DARK}/>,
     disagree: <ThumbsDown size={18} color={DARK}/>,
@@ -947,7 +974,7 @@ function NotificationsPanel({ notifications, onClose, onMarkRead }) {
   return (
     <div style={{ position:"fixed", inset:0, zIndex:500, maxWidth:480, margin:"0 auto" }}>
       <div style={{ background:"rgba(0,0,0,0.4)", position:"absolute", inset:0 }} onClick={onClose}/>
-      <div style={{ position:"absolute", bottom:0, left:0, right:0, background:W, borderRadius:"24px 24px 0 0", maxHeight:"85vh", overflow:"auto", animation:"slideUp 0.25s ease" }}>
+      <div style={{ position:"absolute", bottom:0, left:0, right:0, background:W, borderRadius:"24px 24px 0 0", maxHeight:"85vh", overflow:"auto", animation:"slideUp 0.25s ease" }} {...swipe}>
         <div style={{ position:"sticky", top:0, background:W, padding:"16px 20px 12px", borderBottom:`1px solid ${LG}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, color:DARK, letterSpacing:1.5 }}>NOTIFICATIONS</div>
           <div style={{ display:"flex", gap:10, alignItems:"center" }}>
@@ -974,12 +1001,13 @@ function NotificationsPanel({ notifications, onClose, onMarkRead }) {
 
 // ─── Menu Item Page ───────────────────────────────────────────────────────────
 function MenuItemPage({ item, reviews, onBack, onAddComment, onReact, currentUser }) {
+  const swipe = useSwipeBack(onBack);
   const itemReviews = reviews.filter(r => r.foodItem === item);
   const sorted = [...itemReviews].sort((a,b) => a.rating - b.rating); // worst first
   const avg = itemReviews.length ? (itemReviews.reduce((a,r)=>a+r.rating,0)/itemReviews.length) : 0;
 
   return (
-    <div style={{ position:"fixed", inset:0, background:BG, zIndex:300, display:"flex", flexDirection:"column", maxWidth:480, margin:"0 auto" }}>
+    <div style={{ position:"fixed", inset:0, background:BG, zIndex:300, display:"flex", flexDirection:"column", maxWidth:480, margin:"0 auto" }} {...swipe}>
       <div style={{ background:R, height:56, display:"flex", alignItems:"center", padding:"0 16px", gap:12, flexShrink:0 }}>
         <button onClick={onBack} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:W, width:32, height:32, borderRadius:"50%", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
           <ArrowLeft size={18} color={W}/>
@@ -1215,6 +1243,7 @@ function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
             ) : (
               <>
                 <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:18, letterSpacing:1.5, color:R, marginBottom:10, display:"flex", alignItems:"center", gap:8 }}><TrendingDown size={16} color={R}/> WORST RATED</div>
+                {globalLocData.length===0&&<div style={{ textAlign:"center", padding:"30px 0", color:GRAY, fontSize:14 }}>No reviews yet — be the first to post!</div>}
                 {worst.slice(0,showMoreWorst).map((loc,i)=><LocCard key={loc.id} loc={loc} rank={i+1} isBest={false}/>)}
                 {worst.length>showMoreWorst&&(
                   <button onClick={()=>setShowMoreWorst(v=>v+10)} style={{ width:"100%", background:LG, border:"none", borderRadius:12, padding:"10px 0", fontWeight:700, fontSize:14, cursor:"pointer", color:DARK, marginBottom:8 }}>
@@ -1231,7 +1260,7 @@ function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
                 <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:18, letterSpacing:1.5, color:"#3b82f6", margin:"20px 0 10px", display:"flex", alignItems:"center", gap:8 }}>
                   <Flame size={16} color="#3b82f6"/> MOST REVIEWED
                 </div>
-                {[...locData].sort((a,b)=>parseInt(b.count)-parseInt(a.count)).slice(0,5).map((loc,i)=>(
+                {[...globalLocData].sort((a,b)=>parseInt(b.count)-parseInt(a.count)).slice(0,5).map((loc,i)=>(
                   <div key={loc.id} onClick={()=>onOpenLocation(loc)} style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 16px", background:W, borderRadius:16, marginBottom:8, borderLeft:"4px solid #3b82f6", cursor:"pointer" }}>
                     <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:24, color:"#3b82f6", width:32, textAlign:"center" }}>#{i+1}</div>
                     <div style={{ flex:1 }}>
@@ -1271,76 +1300,45 @@ function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
 
 // ─── Journey Tab ──────────────────────────────────────────────────────────────
 function JourneyTab({ reviews, onOpenLocation }) {
-  const [fromText, setFromText] = useState("");
-  const [toText, setToText] = useState("");
   const [fromPlace, setFromPlace] = useState(null);
   const [toPlace, setToPlace] = useState(null);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [mapReady, setMapReady] = useState(false);
   const [locating, setLocating] = useState(false);
-  const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
+  const [mapsReady, setMapsReady] = useState(false);
   const fromInputRef = useRef(null);
   const toInputRef = useRef(null);
-  const fromACRef = useRef(null);
-  const toACRef = useRef(null);
 
-  // Wait for Maps script loaded at app level
   useEffect(() => {
-    if (window.google?.maps?.DirectionsService) { setMapReady(true); return; }
     const check = setInterval(() => {
-      if (window.google?.maps?.DirectionsService) { setMapReady(true); clearInterval(check); }
-    }, 100);
+      if (window.google?.maps?.places?.Autocomplete) { setMapsReady(true); clearInterval(check); }
+    }, 200);
     return () => clearInterval(check);
   }, []);
 
-  // Set up autocomplete on inputs
   useEffect(() => {
-    if (!mapReady || !fromInputRef.current || !toInputRef.current) return;
-    fromACRef.current = new window.google.maps.places.Autocomplete(fromInputRef.current, { fields: ["place_id","name","geometry","formatted_address"] });
-    fromACRef.current.addListener("place_changed", () => {
-      const p = fromACRef.current.getPlace();
-      if (p.geometry) { setFromPlace(p); setFromText(p.name || p.formatted_address); }
-    });
-    toACRef.current = new window.google.maps.places.Autocomplete(toInputRef.current, { fields: ["place_id","name","geometry","formatted_address"] });
-    toACRef.current.addListener("place_changed", () => {
-      const p = toACRef.current.getPlace();
-      if (p.geometry) { setToPlace(p); setToText(p.name || p.formatted_address); }
-    });
-  }, [mapReady]);
-
-  // Init map once results are shown
-  useEffect(() => {
-    if (!mapReady || !results || !mapRef.current) return;
-    if (mapInstanceRef.current) return;
-    mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
-      zoom: 10,
-      center: fromPlace?.geometry?.location || { lat: -33.8688, lng: 151.2093 },
-      mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
-      styles: [{ featureType:"poi", elementType:"labels", stylers:[{visibility:"off"}] }]
-    });
-  }, [results, mapReady]);
+    if (!mapsReady || !fromInputRef.current || !toInputRef.current) return;
+    const fromAC = new window.google.maps.places.Autocomplete(fromInputRef.current, { fields:["place_id","name","geometry","formatted_address"] });
+    fromAC.addListener("place_changed", () => { const p = fromAC.getPlace(); if (p?.geometry) setFromPlace(p); });
+    const toAC = new window.google.maps.places.Autocomplete(toInputRef.current, { fields:["place_id","name","geometry","formatted_address"] });
+    toAC.addListener("place_changed", () => { const p = toAC.getPlace(); if (p?.geometry) setToPlace(p); });
+  }, [mapsReady]);
 
   const useMyLocation = () => {
-    if (!navigator.geolocation) { setError("Geolocation not supported"); return; }
+    if (!navigator.geolocation) return;
     setLocating(true);
     navigator.geolocation.getCurrentPosition(async pos => {
       const { latitude: lat, longitude: lng } = pos.coords;
       try {
-        const geocoder = new window.google.maps.Geocoder();
-        geocoder.geocode({ location: { lat, lng } }, (results, status) => {
-          if (status === "OK" && results[0]) {
-            const addr = results[0].formatted_address;
-            setFromText(addr);
-            setFromPlace({ geometry: { location: new window.google.maps.LatLng(lat, lng) }, formatted_address: addr });
-            if (fromInputRef.current) fromInputRef.current.value = addr;
-          }
-        });
+        const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`);
+        const data = await res.json();
+        const addr = data.results[0]?.formatted_address || `${lat},${lng}`;
+        if (fromInputRef.current) fromInputRef.current.value = addr;
+        setFromPlace({ geometry: { location: { lat: () => lat, lng: () => lng } }, formatted_address: addr });
       } catch {}
       setLocating(false);
-    }, () => { setError("Could not get location"); setLocating(false); });
+    }, () => setLocating(false));
   };
 
   const getAvgRating = (placeId) => {
@@ -1349,148 +1347,36 @@ function JourneyTab({ reviews, onOpenLocation }) {
   };
 
   const findRoute = async () => {
-    if (!fromPlace || !toPlace) { setError("Please select both start and end points from the suggestions"); return; }
-    if (!window.google?.maps?.DirectionsService) { setError("Maps still loading — please try again in a moment"); return; }
+    if (!fromPlace || !toPlace) { setError("Please select both points from the dropdown suggestions"); return; }
     setLoading(true); setError(""); setResults(null);
-    mapInstanceRef.current = null;
-
     try {
-      const directionsService = new window.google.maps.DirectionsService();
-      const directionsRenderer = new window.google.maps.DirectionsRenderer({ suppressMarkers: false });
-
-      // Get route
-      const routeResult = await new Promise((resolve, reject) => {
-        directionsService.route({
-          origin: fromPlace.geometry.location,
-          destination: toPlace.geometry.location,
-          travelMode: window.google.maps.TravelMode.DRIVING,
-        }, (result, status) => {
-          if (status === "OK") resolve(result);
-          else reject(new Error(status));
-        });
-      });
-
-      const route = routeResult.routes[0];
-      const leg = route.legs[0];
-      const totalDuration = leg.duration.value; // seconds
-
-      // Sample points along the route to search for McDonald's
-      const path = route.overview_path;
-      const totalPoints = path.length;
-      const samplePoints = [];
-      for (let i = 0; i < 5; i++) {
-        samplePoints.push(path[Math.floor((i / 4) * (totalPoints - 1))]);
-      }
-
-      // Search for McDonald's near each sample point
-      const placesService = new window.google.maps.places.PlacesService(document.createElement("div"));
+      const origin = `${fromPlace.geometry.location.lat()},${fromPlace.geometry.location.lng()}`;
+      const destination = `${toPlace.geometry.location.lat()},${toPlace.geometry.location.lng()}`;
+      const dirRes = await fetch(`https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving&key=${GOOGLE_API_KEY}`);
+      const dirData = await dirRes.json();
+      if (dirData.status !== "OK") { setError(`Could not find route: ${dirData.status}. Please check your points.`); setLoading(false); return; }
+      const leg = dirData.routes[0].legs[0];
+      const steps = leg.steps;
+      const sampleSteps = steps.filter((_, i) => i % Math.max(1, Math.floor(steps.length / 5)) === 0).slice(0, 5);
       const allMcds = new Map();
-
-      await Promise.all(samplePoints.map(point => new Promise(resolve => {
-        placesService.nearbySearch({
-          location: point,
-          radius: 5000,
-          keyword: "McDonald's",
-          type: "restaurant"
-        }, (results, status) => {
-          if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
-            results.forEach(p => {
-              if (p.name.toLowerCase().includes("mcdonald") && !allMcds.has(p.place_id)) {
-                allMcds.set(p.place_id, p);
-              }
-            });
-          }
-          resolve();
-        });
-      })));
-
-      // Calculate detour time for each McDonald's
-      const distanceMatrix = new window.google.maps.DistanceMatrixService();
-      const mcdsArray = Array.from(allMcds.values()).slice(0, 10);
-
-      const detourResults = await Promise.all(mcdsArray.map(async mcd => {
-        return new Promise(resolve => {
-          distanceMatrix.getDistanceMatrix({
-            origins: [fromPlace.geometry.location],
-            destinations: [mcd.geometry.location],
-            travelMode: window.google.maps.TravelMode.DRIVING,
-          }, (res, status) => {
-            if (status === "OK") {
-              const element = res.rows[0].elements[0];
-              const detourSecs = element.duration?.value || 0;
-              // Rough detour: time to McDonald's + time from McDonald's to destination vs direct
-              const detourMins = Math.round(Math.max(0, detourSecs - totalDuration / 2) / 60);
-              resolve({
-                placeId: mcd.place_id,
-                name: mcd.name,
-                address: mcd.vicinity,
-                lat: mcd.geometry.location.lat(),
-                lng: mcd.geometry.location.lng(),
-                rating: getAvgRating(mcd.place_id),
-                googleRating: mcd.rating,
-                detourMins,
-                location: mcd.geometry.location,
-              });
-            } else resolve(null);
-          });
-        });
+      await Promise.all(sampleSteps.map(async step => {
+        const lat = step.start_location.lat;
+        const lng = step.start_location.lng;
+        try {
+          const res = await fetch(`https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=5000&keyword=McDonald%27s&type=restaurant&key=${GOOGLE_API_KEY}`);
+          const data = await res.json();
+          (data.results || []).forEach(p => { if (p.name.toLowerCase().includes("mcdonald") && !allMcds.has(p.place_id)) allMcds.set(p.place_id, p); });
+        } catch {}
       }));
-
-      // Filter nulls and sort by position along route
-      const validResults = detourResults
-        .filter(Boolean)
-        .sort((a, b) => {
-          // Sort by how far along the route each McDonald's is
-          const pathLatLng = path.map(p => new window.google.maps.LatLng(p.lat(), p.lng()));
-          const getClosestIdx = (loc) => {
-            let minDist = Infinity, minIdx = 0;
-            pathLatLng.forEach((p, i) => {
-              const d = window.google.maps.geometry.spherical.computeDistanceBetween(p, loc);
-              if (d < minDist) { minDist = d; minIdx = i; }
-            });
-            return minIdx;
-          };
-          return getClosestIdx(a.location) - getClosestIdx(b.location);
-        });
-
-      setResults({ mcds: validResults, route: routeResult, leg });
-
-      // Draw map
-      setTimeout(() => {
-        if (!mapRef.current) return;
-        const map = new window.google.maps.Map(mapRef.current, {
-          mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
-          styles: [{ featureType:"poi", elementType:"labels", stylers:[{visibility:"off"}] }]
-        });
-        mapInstanceRef.current = map;
-        directionsRenderer.setMap(map);
-        directionsRenderer.setDirections(routeResult);
-
-        // Add McDonald's markers
-        validResults.forEach((mcd, i) => {
-          const marker = new window.google.maps.Marker({
-            position: { lat: mcd.lat, lng: mcd.lng },
-            map,
-            title: mcd.name,
-            label: { text: `${i+1}`, color: "white", fontWeight: "bold" },
-            icon: {
-              path: window.google.maps.SymbolPath.CIRCLE,
-              scale: 14,
-              fillColor: "#DA291C",
-              fillOpacity: 1,
-              strokeColor: "#FFC72C",
-              strokeWeight: 2,
-            }
-          });
-          marker.addListener("click", () => {
-            onOpenLocation({ id: mcd.placeId, name: mcd.name, address: mcd.address });
-          });
-        });
-      }, 100);
-
-    } catch(e) {
-      setError(`Could not find route: ${e.message}. Please check your start and end points.`);
-    }
+      const mcdsArray = Array.from(allMcds.values()).slice(0, 10);
+      const mapped = mcdsArray.map(p => ({
+        placeId: p.place_id, name: p.name, address: p.vicinity,
+        lat: p.geometry.location.lat, lng: p.geometry.location.lng,
+        rating: getAvgRating(p.place_id), googleRating: p.rating,
+      }));
+      const mapUrl = `https://www.google.com/maps/embed/v1/directions?key=${GOOGLE_API_KEY}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
+      setResults({ mcds: mapped, leg: { distance: leg.distance, duration: leg.duration }, mapUrl });
+    } catch(e) { setError("Could not find route. Please check your start and end points."); }
     setLoading(false);
   };
 
@@ -1501,83 +1387,45 @@ function JourneyTab({ reviews, onOpenLocation }) {
           <Map size={20} color={R}/>
           <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, color:R, letterSpacing:1.5 }}>MY JOURNEY</div>
         </div>
-
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          {/* From */}
           <div style={{ position:"relative" }}>
-            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", display:"flex", alignItems:"center", zIndex:1 }}>
-              <MapPin size={14} color="#22c55e"/>
-            </span>
-            <input
-              ref={fromInputRef}
-              defaultValue={fromText}
-              onChange={e => { setFromText(e.target.value); setFromPlace(null); }}
-              placeholder="Starting point…"
-              style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}
-            />
+            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", display:"flex", alignItems:"center", zIndex:1 }}><MapPin size={14} color="#22c55e"/></span>
+            <input ref={fromInputRef} placeholder="Starting point…" onChange={()=>setFromPlace(null)}
+              style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}/>
           </div>
-
-          {/* Use my location button */}
-          <button onClick={useMyLocation} disabled={!mapReady || locating} style={{ background:"none", border:`1.5px solid ${LG}`, borderRadius:12, padding:"10px 14px", fontSize:13, color:R, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontFamily:"inherit" }}>
+          <button onClick={useMyLocation} disabled={locating} style={{ background:"none", border:`1.5px solid ${LG}`, borderRadius:12, padding:"10px 14px", fontSize:13, color:R, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontFamily:"inherit" }}>
             <MapPin size={14} color={R}/>{locating ? "Getting location…" : "Use my current location"}
           </button>
-
-          {/* To */}
           <div style={{ position:"relative" }}>
-            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", display:"flex", alignItems:"center", zIndex:1 }}>
-              <MapPin size={14} color={R}/>
-            </span>
-            <input
-              ref={toInputRef}
-              defaultValue={toText}
-              onChange={e => { setToText(e.target.value); setToPlace(null); }}
-              placeholder="Destination…"
-              style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}
-            />
+            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", display:"flex", alignItems:"center", zIndex:1 }}><MapPin size={14} color={R}/></span>
+            <input ref={toInputRef} placeholder="Destination…" onChange={()=>setToPlace(null)}
+              style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}/>
           </div>
-
           {error && <div style={{ fontSize:13, color:R, fontWeight:600 }}>{error}</div>}
-
-          <button onClick={findRoute} disabled={loading || !mapReady || !fromPlace || !toPlace}
-            style={{ background: fromPlace&&toPlace ? R : LG, color: fromPlace&&toPlace ? W : GRAY, border:"none", borderRadius:50, padding:"12px 0", fontWeight:700, fontSize:15, cursor: fromPlace&&toPlace ? "pointer" : "not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8, fontFamily:"inherit" }}>
+          <button onClick={findRoute} disabled={loading || !fromPlace || !toPlace}
+            style={{ background:fromPlace&&toPlace?R:LG, color:fromPlace&&toPlace?W:GRAY, border:"none", borderRadius:50, padding:"12px 0", fontWeight:700, fontSize:15, cursor:fromPlace&&toPlace?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8, fontFamily:"inherit" }}>
             <Navigation size={16} color={fromPlace&&toPlace?W:GRAY}/>
             {loading ? "Finding McDonald's on route…" : "Find McDonald's on Route"}
           </button>
         </div>
       </div>
-
-      {/* Map */}
       {results && (
-        <div ref={mapRef} style={{ width:"100%", height:280, background:LG }}/>
+        <iframe title="Route Map" src={results.mapUrl}
+          style={{ width:"100%", height:260, border:"none", display:"block" }} allowFullScreen loading="lazy"/>
       )}
-
-      {/* Results */}
       {results && (
         <div style={{ padding:16 }}>
-          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:18, letterSpacing:1.5, color:DARK, marginBottom:4 }}>
-            {results.mcds.length} MACCAS ON YOUR ROUTE
-          </div>
-          <div style={{ fontSize:12, color:GRAY, marginBottom:12 }}>
-            {results.leg.distance.text} · {results.leg.duration.text} total journey
-          </div>
-          {results.mcds.length === 0 && (
-            <div style={{ textAlign:"center", padding:"40px 0", color:GRAY }}>
-              <div style={{ fontSize:14 }}>No McDonald's found along this route</div>
-            </div>
-          )}
+          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:18, letterSpacing:1.5, color:DARK, marginBottom:4 }}>{results.mcds.length} MACCAS ON YOUR ROUTE</div>
+          <div style={{ fontSize:12, color:GRAY, marginBottom:12 }}>{results.leg.distance.text} · {results.leg.duration.text} total journey</div>
+          {results.mcds.length === 0 && <div style={{ textAlign:"center", padding:"40px 0", color:GRAY, fontSize:14 }}>No McDonald's found along this route</div>}
           {results.mcds.map((mcd, i) => (
-            <div key={mcd.placeId} onClick={() => onOpenLocation({ id:mcd.placeId, name:mcd.name, address:mcd.address })}
+            <div key={mcd.placeId} onClick={()=>onOpenLocation({ id:mcd.placeId, name:mcd.name, address:mcd.address })}
               style={{ background:W, borderRadius:16, padding:"14px 16px", marginBottom:10, boxShadow:"0 2px 12px rgba(0,0,0,0.06)", cursor:"pointer", display:"flex", gap:14, alignItems:"center" }}>
               <div style={{ width:32, height:32, borderRadius:"50%", background:R, color:W, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Bebas Neue',sans-serif", fontSize:16, flexShrink:0 }}>{i+1}</div>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontWeight:700, fontSize:15, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mcd.name}</div>
                 <div style={{ fontSize:12, color:GRAY, marginTop:2, display:"flex", alignItems:"center", gap:3 }}><MapPin size={10} color={GRAY}/>{mcd.address}</div>
                 <div style={{ display:"flex", gap:8, marginTop:6, alignItems:"center" }}>
-                  {mcd.detourMins !== undefined && (
-                    <div style={{ background: mcd.detourMins<=3?"#D4EDDA":mcd.detourMins<=8?"#FFF3CD":"#F8D7DA", borderRadius:50, padding:"3px 10px", fontSize:12, fontWeight:700, color:mcd.detourMins<=3?"#155724":mcd.detourMins<=8?"#856404":"#721c24" }}>
-                      +{mcd.detourMins} min
-                    </div>
-                  )}
                   {mcd.rating && <div style={{ display:"flex", alignItems:"center", gap:4 }}><Stars n={parseFloat(mcd.rating)} size={12}/><span style={{ fontSize:12, color:GRAY }}>{mcd.rating} McRate</span></div>}
                   {!mcd.rating && mcd.googleRating && <span style={{ fontSize:12, color:GRAY }}>★ {mcd.googleRating} Google</span>}
                 </div>
@@ -1587,7 +1435,6 @@ function JourneyTab({ reviews, onOpenLocation }) {
           ))}
         </div>
       )}
-
       {!results && !loading && (
         <div style={{ textAlign:"center", padding:"60px 20px", color:GRAY }}>
           <Navigation size={56} color={LG} style={{ margin:"0 auto 12px" }}/>
@@ -1601,6 +1448,7 @@ function JourneyTab({ reviews, onOpenLocation }) {
 
 // ─── Location Page ────────────────────────────────────────────────────────────
 function LocationPage({ location, reviews, onBack, onAddReview, onAddComment, onReact, currentUser }) {
+  const swipe = useSwipeBack(onBack);
   const locReviews = reviews.filter(r=>r.locationId===location.id);
   const avg = locReviews.length?(locReviews.reduce((a,r)=>a+r.rating,0)/locReviews.length):0;
   const catKeys = [["hot","Hot"],["wellBuilt","Well Built"],["fresh","Fresh"],["portionSize","Portion Size"]];
@@ -1855,37 +1703,41 @@ function ProfileTab({ user, reviews, onLogout, onUpdateUser, onOpenLocation, tok
   );
 }
 
-// ─── Onboarding Infographic ───────────────────────────────────────────────────
-function OnboardingSlide({ onDone }) {
+// ─── Onboarding Feed Card ─────────────────────────────────────────────────────
+function OnboardingCard({ onDismiss }) {
   const [page, setPage] = useState(0);
   const slides = [
-    { icon: <Camera size={56} color={W}/>, title:"Post Your Meal", body:"Take a photo of your McDonald's order and rate it 1–5 stars. Be honest — the community is watching." },
-    { icon: <ThumbsUp size={56} color={W}/>, title:"Agree or Disagree", body:"See someone's review? Tell them if you agree with their rating. Community trust drives the rankings." },
-    { icon: <Trophy size={56} color={W}/>, title:"Climb the Ranks", body:"The more you review, the higher your tier. Bronze → Silver → Gold. Earn badges along the way." },
-    { icon: <MapPin size={56} color={W}/>, title:"Find the Best Near You", body:"Rankings show the best and worst McDonald's near you. Journey finds Maccas along any route." },
+    { icon:<Camera size={26} color={W}/>, title:"Post Your Meal", body:"Photo + 1–5 star rating = instant community feedback on your order." },
+    { icon:<ThumbsUp size={26} color={W}/>, title:"Agree or Disagree", body:"Vote on other people's reviews. Your votes build the global rankings." },
+    { icon:<Trophy size={26} color={W}/>, title:"Climb the Ranks", body:"Bronze → Silver → Gold reviewer. Earn badges as you post more." },
+    { icon:<MapPin size={26} color={W}/>, title:"Find Maccas on Route", body:"Journey tab finds McDonald's along any drive — great for road trips." },
   ];
   const s = slides[page];
   return (
-    <div style={{ position:"fixed", inset:0, background:R, zIndex:900, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:32, maxWidth:480, margin:"0 auto" }}>
-      <div style={{ marginBottom:32 }}>{s.icon}</div>
-      <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:36, color:Y, letterSpacing:2, textAlign:"center", marginBottom:16 }}>{s.title}</div>
-      <div style={{ fontSize:16, color:"rgba(255,255,255,0.85)", textAlign:"center", lineHeight:1.7, marginBottom:40 }}>{s.body}</div>
-      <div style={{ display:"flex", gap:8, marginBottom:32 }}>
-        {slides.map((_,i) => <div key={i} style={{ width:i===page?24:8, height:8, borderRadius:4, background:i===page?Y:"rgba(255,255,255,0.3)", transition:"all 0.2s" }}/>)}
+    <div style={{ background:W, marginBottom:8, borderBottom:`1px solid ${LG}` }}>
+      <div style={{ background:R, padding:"14px 16px", display:"flex", gap:12, alignItems:"center" }}>
+        <div style={{ width:44, height:44, borderRadius:12, background:"rgba(255,255,255,0.15)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>{s.icon}</div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:17, color:Y, letterSpacing:1 }}>{s.title}</div>
+          <div style={{ fontSize:13, color:"rgba(255,255,255,0.85)", marginTop:2, lineHeight:1.4 }}>{s.body}</div>
+        </div>
+        <button onClick={onDismiss} style={{ background:"rgba(255,255,255,0.15)", border:"none", color:W, width:26, height:26, borderRadius:"50%", cursor:"pointer", fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>×</button>
       </div>
-      <div style={{ display:"flex", gap:12, width:"100%" }}>
-        {page < slides.length - 1 ? (
-          <>
-            <button onClick={onDone} style={{ flex:1, background:"rgba(255,255,255,0.15)", color:W, border:"none", borderRadius:50, padding:"14px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit" }}>Skip</button>
-            <button onClick={()=>setPage(p=>p+1)} style={{ flex:2, background:Y, color:DARK, border:"none", borderRadius:50, padding:"14px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit" }}>Next →</button>
-          </>
-        ) : (
-          <button onClick={onDone} style={{ flex:1, background:Y, color:DARK, border:"none", borderRadius:50, padding:"14px 0", fontWeight:700, fontSize:16, cursor:"pointer", fontFamily:"inherit" }}>Let's Go! 🍔</button>
-        )}
+      <div style={{ padding:"10px 16px 12px", display:"flex", alignItems:"center", gap:10 }}>
+        <div style={{ display:"flex", gap:5, flex:1 }}>
+          {slides.map((_,i)=>(
+            <div key={i} onClick={()=>setPage(i)} style={{ width:i===page?20:6, height:6, borderRadius:3, background:i===page?R:LG, transition:"all 0.2s", cursor:"pointer" }}/>
+          ))}
+        </div>
+        {page < slides.length-1
+          ? <button onClick={()=>setPage(p=>p+1)} style={{ background:R, color:W, border:"none", borderRadius:50, padding:"7px 18px", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>Next →</button>
+          : <button onClick={onDismiss} style={{ background:R, color:W, border:"none", borderRadius:50, padding:"7px 18px", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>Got it!</button>
+        }
       </div>
     </div>
   );
 }
+
 function SplashScreen({ onDone }) {
   useEffect(() => { const t = setTimeout(onDone, 2200); return () => clearTimeout(t); }, []);
   return (
@@ -2200,9 +2052,11 @@ export default function App() {
     if (window.google?.maps?.DirectionsService) return;
     if (document.querySelector('script[src*="maps.googleapis.com"]')) return;
     if (GOOGLE_API_KEY === "YOUR_GOOGLE_PLACES_API_KEY") return;
+    window.initGoogleMaps = () => {}; // callback placeholder
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry,directions`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places,geometry,drawing&callback=initGoogleMaps`;
     script.async = true;
+    script.defer = true;
     document.head.appendChild(script);
   }, []);
 
@@ -2392,9 +2246,12 @@ export default function App() {
     }
   };
 
-  const handleOpenUser = (review) => {
-    if (user && review.userId === user.id) { setTab("profile"); return; }
-    setUserProfilePage({ userId:review.userId, userName:review.userName, userTier:review.userTier });
+  const handleOpenUser = (reviewOrUser) => {
+    const userId = reviewOrUser.userId;
+    const userName = reviewOrUser.userName || reviewOrUser.user;
+    const userTier = reviewOrUser.userTier;
+    if (user && userId === user.id) { setTab("profile"); return; }
+    setUserProfilePage({ userId, userName, userTier });
   };
 
   const currentUser = user||{id:"guest",name:"You",tier:"bronze"};
@@ -2423,7 +2280,6 @@ export default function App() {
         ::-webkit-scrollbar{width:0}
       `}</style>
 
-      {showOnboarding && authStage==="app" && <OnboardingSlide onDone={()=>setShowOnboarding(false)}/>}
       {authStage==="login"&&<LoginScreen onLogin={handleLogin} onGoSignUp={()=>setAuth("signup")} onClose={()=>setAuth("app")}/>}
       {authStage==="signup"&&<SignUpScreen onSignUp={handleSignUp} onGoLogin={()=>setAuth("login")}/>}
 
@@ -2445,7 +2301,7 @@ export default function App() {
           </div>
         </div>
         <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
-          {tab==="home"&&<FeedTab reviews={reviews} user={currentUser} onAgree={handleAgree} onDisagree={handleDisagree} onAddComment={handleAddComment} onReact={handleReact} onOpenUser={handleOpenUser}/>}
+          {tab==="home"&&<FeedTab reviews={reviews} user={currentUser} onAgree={handleAgree} onDisagree={handleDisagree} onAddComment={handleAddComment} onReact={handleReact} onOpenUser={handleOpenUser} onOpenLocation={setLocationPage} showOnboarding={showOnboarding} onDismissOnboarding={()=>setShowOnboarding(false)}/>}
           {tab==="bestworst"&&<BestWorstTab reviews={reviews} onOpenLocation={setLocationPage} onOpenMenuItem={setMenuItemPage}/>}
           {tab==="journey"&&<JourneyTab reviews={reviews} onOpenLocation={setLocationPage}/>}
           {tab==="profile"&&(user
