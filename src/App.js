@@ -1620,8 +1620,29 @@ function LocationPage({ location, reviews, onBack, onAddReview, onAddComment, on
 function EditProfileModal({ user, onClose, onSave }) {
   const [name, setName] = useState(user.name);
   const [avatar, setAvatar] = useState(user.avatar || null);
+  const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
-  const handleFile = e => { const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>setAvatar(ev.target.result); r.readAsDataURL(f); };
+
+  const handleFile = e => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => setAvatar(ev.target.result);
+    r.readAsDataURL(f);
+  };
+
+  const handleSave = async () => {
+    setUploading(true);
+    let avatarUrl = user.avatar;
+    // Upload new photo if changed
+    if (avatar && avatar !== user.avatar && avatar.startsWith("data:")) {
+      const uploaded = await sb.uploadPhoto(avatar, `avatars/${user.id}_${Date.now()}.jpg`, user.token).catch(()=>null);
+      if (uploaded) avatarUrl = uploaded;
+    }
+    onSave({ name, avatar: avatarUrl, avatar_url: avatarUrl });
+    setUploading(false);
+    onClose();
+  };
+
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:600, display:"flex", alignItems:"flex-end", justifyContent:"center" }} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{ background:W, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:480, padding:24, animation:"slideUp 0.25s ease" }}>
@@ -1632,18 +1653,25 @@ function EditProfileModal({ user, onClose, onSave }) {
         <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:16 }}>
           <div onClick={()=>fileRef.current?.click()} style={{ position:"relative", cursor:"pointer" }}>
             <div style={{ width:80, height:80, borderRadius:"50%", background:R, border:`3px solid ${Y}`, overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              {avatar ? <img src={avatar} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}/> : <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:36, color:Y }}>{name?.[0]?.toUpperCase()||"?"}</span>}
+              {avatar
+                ? <img src={avatar} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+                : <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:36, color:Y }}>{name?.[0]?.toUpperCase()||"?"}</span>}
             </div>
             <div style={{ position:"absolute", bottom:0, right:0, width:26, height:26, borderRadius:"50%", background:R, border:`2px solid ${W}`, display:"flex", alignItems:"center", justifyContent:"center" }}>
               <Camera size={13} color={W}/>
             </div>
           </div>
           <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }} onChange={handleFile}/>
+          {avatar && avatar !== user.avatar && (
+            <div style={{ fontSize:12, color:"#22c55e", fontWeight:600 }}>✓ New photo selected — will save when you tap Save</div>
+          )}
           <div style={{ width:"100%" }}>
             <div style={{ fontSize:12, fontWeight:700, color:GRAY, textTransform:"uppercase", letterSpacing:0.5, marginBottom:6 }}>Display Name</div>
             <input value={name} onChange={e=>setName(e.target.value)} style={{ width:"100%", padding:"11px 14px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:15, fontFamily:"inherit", outline:"none" }}/>
           </div>
-          <button onClick={()=>{onSave({name,avatar});onClose();}} style={{ width:"100%", background:R, color:W, border:"none", borderRadius:50, padding:"13px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit" }}>Save Changes</button>
+          <button onClick={handleSave} disabled={uploading} style={{ width:"100%", background:R, color:W, border:"none", borderRadius:50, padding:"13px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit" }}>
+            {uploading ? "Saving…" : "Save Changes"}
+          </button>
         </div>
       </div>
     </div>
@@ -1651,7 +1679,7 @@ function EditProfileModal({ user, onClose, onSave }) {
 }
 
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
-function ProfileTab({ user, reviews, onLogout, onUpdateUser }) {
+function ProfileTab({ user, reviews, onLogout, onUpdateUser, onOpenLocation, token }) {
   const myReviews = reviews.filter(r => r.userId === user?.id);
   const [aiDNA, setAiDNA] = useState(null);
   const [loadingDNA, setLoadingDNA] = useState(false);
@@ -1733,17 +1761,21 @@ function ProfileTab({ user, reviews, onLogout, onUpdateUser }) {
           <div style={{ fontWeight:700, fontSize:15, marginBottom:12, display:"flex", alignItems:"center", gap:8 }}><Star size={15} color={Y} fill={Y}/>My Reviews ({myReviews.length})</div>
           {myReviews.length===0&&<div style={{ color:GRAY, fontSize:14, textAlign:"center", padding:"12px 0" }}>No reviews yet — start posting!</div>}
           {myReviews.map(r=>(
-            <div key={r.id} style={{ display:"flex", gap:12, padding:"10px 0", borderBottom:`1px solid ${LG}` }}>
-              <img src={r.image} alt="" style={{ width:48, height:48, borderRadius:10, objectFit:"cover" }}/>
+            <div key={r.id} onClick={()=>onOpenLocation&&onOpenLocation({id:r.locationId, name:r.locationName, address:""})}
+              style={{ display:"flex", gap:12, padding:"10px 0", borderBottom:`1px solid ${LG}`, cursor:"pointer" }}>
+              <img src={r.image} alt="" style={{ width:56, height:56, borderRadius:10, objectFit:"cover", flexShrink:0 }}/>
               <div style={{ flex:1 }}>
                 <div style={{ fontWeight:600, fontSize:14 }}>{r.foodItem}</div>
-                <div style={{ fontSize:12, color:GRAY }}>{r.locationName}</div>
+                <div style={{ fontSize:12, color:GRAY, marginTop:2, display:"flex", alignItems:"center", gap:3 }}>
+                  <MapPin size={10} color={GRAY}/>{r.locationName}
+                </div>
                 <div style={{ display:"flex", gap:10, marginTop:4, fontSize:12, color:GRAY, alignItems:"center" }}>
                   <Stars n={r.rating} size={12}/>
                   <ThumbsUp size={11} color={GRAY}/><span>{r.agrees}</span>
                   <ThumbsDown size={11} color={GRAY}/><span>{r.disagrees}</span>
                 </div>
               </div>
+              <span style={{ color:LG, fontSize:18, alignSelf:"center" }}>›</span>
             </div>
           ))}
         </div>
@@ -1765,7 +1797,7 @@ function ProfileTab({ user, reviews, onLogout, onUpdateUser }) {
         )}
       </div>
 
-      {showEdit && <EditProfileModal user={user} onClose={()=>setShowEdit(false)} onSave={onUpdateUser}/>}
+      {showEdit && <EditProfileModal user={{...user, token}} onClose={()=>setShowEdit(false)} onSave={onUpdateUser}/>}
     </div>
   );
 }
@@ -2292,7 +2324,7 @@ export default function App() {
           {tab==="bestworst"&&<BestWorstTab reviews={reviews} locations={MOCK_LOCATIONS} onOpenLocation={setLocationPage} onOpenMenuItem={setMenuItemPage}/>}
           {tab==="journey"&&<JourneyTab reviews={reviews} onOpenLocation={setLocationPage}/>}
           {tab==="profile"&&(user
-            ? <ProfileTab user={currentUser} reviews={reviews} onLogout={handleLogout} onUpdateUser={handleUpdateUser}/>
+            ? <ProfileTab user={currentUser} reviews={reviews} onLogout={handleLogout} onUpdateUser={handleUpdateUser} onOpenLocation={setLocationPage} token={token}/>
             : <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:32, gap:20, background:BG }}>
                 <User size={64} color={LG}/>
                 <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:28, letterSpacing:2, color:DARK, textAlign:"center" }}>YOUR PROFILE</div>
