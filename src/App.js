@@ -2173,7 +2173,7 @@ export default function App() {
   const [token, setToken] = useState(null);
   const [reviews, setReviews] = useState(SEED);
   const [notifications, setNotifications] = useState(SEED_NOTIFS);
-  const [appLoading, setAppLoading] = useState(true);
+  const [appLoading, setAppLoading] = useState(false);
   const [tab, setTab] = useState("home");
   const [showAddPost, setShowAddPost] = useState(false);
   const [addPostLocation, setAddPostLocation] = useState(null);
