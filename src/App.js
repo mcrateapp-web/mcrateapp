@@ -2174,6 +2174,7 @@ export default function App() {
   const [reviews, setReviews] = useState(SEED);
   const [notifications, setNotifications] = useState(SEED_NOTIFS);
   const [appLoading, setAppLoading] = useState(false);
+  const [toast, setToast] = useState(null);
   const [tab, setTab] = useState("home");
   const [showAddPost, setShowAddPost] = useState(false);
   const [addPostLocation, setAddPostLocation] = useState(null);
@@ -2423,6 +2424,7 @@ export default function App() {
       `}</style>
 
       {showOnboarding && authStage==="app" && <OnboardingSlide onDone={()=>setShowOnboarding(false)}/>}
+      {authStage==="login"&&<LoginScreen onLogin={handleLogin} onGoSignUp={()=>setAuth("signup")} onClose={()=>setAuth("app")}/>}
       {authStage==="signup"&&<SignUpScreen onSignUp={handleSignUp} onGoLogin={()=>setAuth("login")}/>}
 
       {authStage==="app"&&<>
