@@ -1380,59 +1380,74 @@ function JourneyTab({ reviews, onOpenLocation }) {
       const gm = window['google'] && window['google']['maps'];
       if (!gm) { setError("Maps not loaded — please refresh and try again"); setLoading(false); return; }
 
-      // Use bracket notation throughout to survive minification
       const DS = gm['DirectionsService'];
       const DMode = gm['TravelMode'];
       const PS = gm['places'] && gm['places']['PlacesService'];
       const PSS = gm['places'] && gm['places']['PlacesServiceStatus'];
 
-      if (!DS) { setError("Maps still loading — please wait a moment and try again"); setLoading(false); return; }
+      if (!DS || !PS) { setError("Maps still loading — please wait a moment and try again"); setLoading(false); return; }
 
+      // Helper to wrap callback with timeout
+      const withTimeout = (fn, ms=8000) => Promise.race([
+        fn(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))
+      ]);
+
+      // 1. Get route
       const ds = new DS();
-      const routeResult = await new Promise((resolve, reject) => {
+      const routeResult = await withTimeout(() => new Promise((resolve, reject) => {
         ds['route']({
           origin: fromPlace.geometry.location,
           destination: toPlace.geometry.location,
           travelMode: DMode['DRIVING'],
         }, (result, status) => {
           if (status === 'OK') resolve(result);
-          else reject(new Error(status));
+          else reject(new Error(`Directions failed: ${status}`));
         });
-      });
+      }));
 
       const leg = routeResult['routes'][0]['legs'][0];
       const path = routeResult['routes'][0]['overview_path'];
-      const totalPoints = path.length;
 
-      // Sample 5 points along the route
-      const samplePoints = [];
-      for (let i = 0; i < 5; i++) {
-        samplePoints.push(path[Math.floor((i / 4) * (totalPoints - 1))]);
-      }
+      // 2. Search for McDonald's at midpoint and 2 other points along route
+      const indices = [
+        Math.floor(path.length * 0.25),
+        Math.floor(path.length * 0.5),
+        Math.floor(path.length * 0.75),
+      ];
+      const samplePoints = indices.map(i => path[i]);
 
       const allMcds = new Map();
       const dummy = document.createElement('div');
       const ps = new PS(dummy);
 
-      await Promise.all(samplePoints.map(point => new Promise(resolve => {
-        ps['nearbySearch']({
-          location: point,
-          radius: 5000,
-          keyword: "McDonald's",
-          type: 'restaurant'
-        }, (results, status) => {
-          if (status === PSS['OK'] && results) {
-            results.forEach(p => {
-              if (p.name.toLowerCase().includes('mcdonald') && !allMcds.has(p['place_id'])) {
-                allMcds.set(p['place_id'], p);
+      for (const point of samplePoints) {
+        try {
+          await withTimeout(() => new Promise(resolve => {
+            ps['nearbySearch']({
+              location: point,
+              radius: 8000,
+              keyword: "McDonald's",
+              type: 'restaurant'
+            }, (results, status) => {
+              if (results) {
+                results.forEach(p => {
+                  if (p.name.toLowerCase().includes('mcdonald') && !allMcds.has(p['place_id'])) {
+                    allMcds.set(p['place_id'], p);
+                  }
+                });
               }
+              resolve();
             });
-          }
-          resolve();
-        });
-      })));
+          }), 6000);
+        } catch {}
+      }
 
-      const mcdsArray = Array.from(allMcds.values()).slice(0, 10);
+      // 3. Build results
+      const mcdsArray = Array.from(allMcds.values()).slice(0, 8);
+
+      // Sort by position along route
+      const geoLib = gm['geometry'] && gm['geometry']['spherical'];
       const mapped = mcdsArray.map(p => ({
         placeId: p['place_id'],
         name: p.name,
@@ -1444,15 +1459,12 @@ function JourneyTab({ reviews, onOpenLocation }) {
         location: p.geometry.location,
       }));
 
-      // Sort by position along route
-      const geoLib = gm['geometry'] && gm['geometry']['spherical'];
       if (geoLib) {
-        const pathLatLngs = path.map(p => new gm['LatLng'](p.lat(), p.lng()));
         mapped.sort((a, b) => {
           const getIdx = loc => {
             let minDist = Infinity, minIdx = 0;
-            pathLatLngs.forEach((p, i) => {
-              const d = geoLib['computeDistanceBetween'](p, loc);
+            path.forEach((p, i) => {
+              const d = geoLib['computeDistanceBetween'](new gm['LatLng'](p.lat(), p.lng()), loc);
               if (d < minDist) { minDist = d; minIdx = i; }
             });
             return minIdx;
