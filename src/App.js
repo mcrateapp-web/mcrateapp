@@ -1365,8 +1365,18 @@ function JourneyTab({ reviews, onOpenLocation }) {
         const data = await res.json();
         const addr = data.results[0]?.formatted_address || `${lat},${lng}`;
         if (fromInputRef.current) fromInputRef.current.value = addr;
-        setFromPlace({ geometry: { location: { lat: () => lat, lng: () => lng } }, formatted_address: addr });
-      } catch {}
+        // Store as a proper place object with formatted_address for DirectionsService
+        setFromPlace({
+          formatted_address: addr,
+          name: addr,
+          geometry: { location: { lat: () => lat, lng: () => lng } }
+        });
+      } catch {
+        // Fallback to coords as string
+        const coordStr = `${lat},${lng}`;
+        if (fromInputRef.current) fromInputRef.current.value = coordStr;
+        setFromPlace({ formatted_address: coordStr, name: coordStr, geometry: { location: { lat: () => lat, lng: () => lng } } });
+      }
       setLocating(false);
     }, () => setLocating(false));
   };
@@ -1396,16 +1406,24 @@ function JourneyTab({ reviews, onOpenLocation }) {
         new Promise((_, reject) => setTimeout(() => reject(new Error("Request timed out — check your internet connection")), ms))
       ]);
 
-      // 1. Get route
+      // 1. Get route — pass as address strings, much more reliable than LatLng objects
+      const originStr = fromPlace.formatted_address || fromPlace.name || "";
+      const destStr = toPlace.formatted_address || toPlace.name || "";
+
+      if (!originStr || !destStr) {
+        setError("Could not read addresses — please re-select from the dropdown");
+        setLoading(false); return;
+      }
+
       const ds = new DS();
       const routeResult = await withTimeout(() => new Promise((resolve, reject) => {
         ds['route']({
-          origin: fromPlace.geometry.location,
-          destination: toPlace.geometry.location,
+          origin: originStr,
+          destination: destStr,
           travelMode: DMode['DRIVING'],
         }, (result, status) => {
           if (status === 'OK') resolve(result);
-          else reject(new Error(`Directions failed: ${status}`));
+          else reject(new Error(`Route error: ${status}`));
         });
       }));
 
@@ -1476,9 +1494,7 @@ function JourneyTab({ reviews, onOpenLocation }) {
         });
       }
 
-      const origin = `${fromPlace.geometry.location.lat()},${fromPlace.geometry.location.lng()}`;
-      const destination = `${toPlace.geometry.location.lat()},${toPlace.geometry.location.lng()}`;
-      const mapUrl = `https://www.google.com/maps/embed/v1/directions?key=${GOOGLE_API_KEY}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
+      const mapUrl = `https://www.google.com/maps/embed/v1/directions?key=${GOOGLE_API_KEY}&origin=${encodeURIComponent(originStr)}&destination=${encodeURIComponent(destStr)}&mode=driving`;
 
       setResults({
         mcds: mapped,
