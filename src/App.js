@@ -1386,62 +1386,41 @@ function JourneyTab({ reviews, onOpenLocation }) {
     return r.length ? (r.reduce((a,x)=>a+x.rating,0)/r.length).toFixed(1) : null;
   };
 
-  const findRoute = async () => {
+  const findRoute = () => {
     if (!fromPlace || !toPlace) { setError("Please select both points from the dropdown suggestions"); return; }
     if (!window.google?.maps?.places) { setError("Maps not ready — please wait a moment and try again"); return; }
     setLoading(true); setError(""); setResults(null);
-    try {
-      const fromLat = fromPlace.geometry.location.lat();
-      const fromLng = fromPlace.geometry.location.lng();
-      const toLat = toPlace.geometry.location.lat();
-      const toLng = toPlace.geometry.location.lng();
 
-      // Straight-line distance estimate
-      const toRad = x => x * Math.PI / 180;
-      const dLat = toRad(toLat - fromLat);
-      const dLng = toRad(toLng - fromLng);
-      const aVal = Math.sin(dLat/2)**2 + Math.cos(toRad(fromLat)) * Math.cos(toRad(toLat)) * Math.sin(dLng/2)**2;
-      const distKm = parseFloat((6371 * 2 * Math.atan2(Math.sqrt(aVal), Math.sqrt(1-aVal))).toFixed(1));
-      const estMins = Math.round(distKm * 1.5);
-      const searchRadius = Math.min(Math.max(distKm * 200, 3000), 10000);
+    const fromLat = fromPlace.geometry.location.lat();
+    const fromLng = fromPlace.geometry.location.lng();
+    const toLat = toPlace.geometry.location.lat();
+    const toLng = toPlace.geometry.location.lng();
 
-      // Sample 5 points along straight line between A and B
-      const samplePoints = [0.1, 0.3, 0.5, 0.7, 0.9].map(t => ({
-        lat: fromLat + (toLat - fromLat) * t,
-        lng: fromLng + (toLng - fromLng) * t,
-      }));
+    // Straight-line distance estimate
+    const toRad = function(x) { return x * Math.PI / 180; };
+    const dLat = toRad(toLat - fromLat);
+    const dLng = toRad(toLng - fromLng);
+    const aVal = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(toRad(fromLat)) * Math.cos(toRad(toLat)) * Math.sin(dLng/2)*Math.sin(dLng/2);
+    const distKm = parseFloat((6371 * 2 * Math.atan2(Math.sqrt(aVal), Math.sqrt(1-aVal))).toFixed(1));
+    const estMins = Math.round(distKm * 1.5);
+    const searchRadius = Math.min(Math.max(distKm * 200, 3000), 10000);
 
-      // Use EXACT same PlacesService pattern as Rankings tab (this works in production)
-      const allMcds = new Map();
-      const service = new window.google.maps.places.PlacesService(document.createElement("div"));
+    // 5 sample points along the route
+    const samplePoints = [0.1, 0.3, 0.5, 0.7, 0.9].map(function(t) {
+      return { lat: fromLat + (toLat - fromLat) * t, lng: fromLng + (toLng - fromLng) * t };
+    });
 
-      for (const point of samplePoints) {
-        await new Promise(resolve => {
-          service.nearbySearch({
-            location: { lat: point.lat, lng: point.lng },
-            radius: searchRadius,
-            keyword: "McDonald's",
-            type: "restaurant"
-          }, (results) => {
-            if (results) {
-              results.forEach(p => {
-                if (p.name.toLowerCase().includes("mcdonald") && !allMcds.has(p.place_id)) {
-                  allMcds.set(p.place_id, p);
-                }
-              });
-            }
-            resolve();
-          });
-          setTimeout(resolve, 5000); // safety timeout
-        });
-      }
+    const allMcds = {};
+    const service = new window.google.maps.places.PlacesService(document.createElement("div"));
+    let pending = samplePoints.length;
 
-      // Sort by position along route
-      const mapped = Array.from(allMcds.values()).slice(0, 8).map(p => {
+    const onAllDone = function() {
+      const mcdsArray = Object.values(allMcds).slice(0, 8);
+      const mapped = mcdsArray.map(function(p) {
         const pLat = p.geometry.location.lat();
         const pLng = p.geometry.location.lng();
         const progress = ((pLat - fromLat) * (toLat - fromLat) + (pLng - fromLng) * (toLng - fromLng)) /
-          ((toLat - fromLat)**2 + (toLng - fromLng)**2 + 0.0001);
+          ((toLat - fromLat)*(toLat - fromLat) + (toLng - fromLng)*(toLng - fromLng) + 0.0001);
         return {
           placeId: p.place_id,
           name: p.name,
@@ -1451,22 +1430,44 @@ function JourneyTab({ reviews, onOpenLocation }) {
           googleRating: p.rating,
           routeProgress: progress,
         };
-      }).sort((a, b) => a.routeProgress - b.routeProgress);
+      }).sort(function(a, b) { return a.routeProgress - b.routeProgress; });
 
       const originStr = fromPlace.formatted_address || fromPlace.name || "";
       const destStr = toPlace.formatted_address || toPlace.name || "";
-      const mapUrl = `https://www.google.com/maps/embed/v1/directions?key=${GOOGLE_API_KEY}&origin=${encodeURIComponent(originStr)}&destination=${encodeURIComponent(destStr)}&mode=driving`;
+      const mapUrl = "https://www.google.com/maps/embed/v1/directions?key=" + GOOGLE_API_KEY +
+        "&origin=" + encodeURIComponent(originStr) +
+        "&destination=" + encodeURIComponent(destStr) + "&mode=driving";
 
       setResults({
         mcds: mapped,
-        leg: { distance: { text: `~${distKm}km` }, duration: { text: `~${estMins} min driving` } },
-        mapUrl
+        leg: { distance: { text: "~" + distKm + "km" }, duration: { text: "~" + estMins + " min driving" } },
+        mapUrl: mapUrl
       });
+      setLoading(false);
+    };
 
-    } catch(e) {
-      setError(`Something went wrong: ${e.message}`);
-    }
-    setLoading(false);
+    samplePoints.forEach(function(point) {
+      var done = false;
+      var resolve = function() {
+        if (!done) { done = true; pending--; if (pending <= 0) onAllDone(); }
+      };
+      service.nearbySearch({
+        location: { lat: point.lat, lng: point.lng },
+        radius: searchRadius,
+        keyword: "McDonald's",
+        type: "restaurant"
+      }, function(results) {
+        if (results) {
+          results.forEach(function(p) {
+            if (p.name.toLowerCase().indexOf("mcdonald") !== -1 && !allMcds[p.place_id]) {
+              allMcds[p.place_id] = p;
+            }
+          });
+        }
+        resolve();
+      });
+      setTimeout(resolve, 6000);
+    });
   };
 
   return (
