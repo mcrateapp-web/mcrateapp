@@ -1390,120 +1390,89 @@ function JourneyTab({ reviews, onOpenLocation }) {
     if (!fromPlace || !toPlace) { setError("Please select both points from the dropdown suggestions"); return; }
     setLoading(true); setError(""); setResults(null);
     try {
-      const gm = window['google'] && window['google']['maps'];
-      if (!gm) { setError("Maps not loaded — please refresh and try again"); setLoading(false); return; }
+      // Get coordinates from place objects
+      const fromLat = fromPlace.geometry.location.lat();
+      const fromLng = fromPlace.geometry.location.lng();
+      const toLat = toPlace.geometry.location.lat();
+      const toLng = toPlace.geometry.location.lng();
 
-      const DS = gm['DirectionsService'];
-      const DMode = gm['TravelMode'];
-      const PS = gm['places'] && gm['places']['PlacesService'];
-      const PSS = gm['places'] && gm['places']['PlacesServiceStatus'];
+      // Calculate straight-line distance in km
+      const toRad = x => x * Math.PI / 180;
+      const R = 6371;
+      const dLat = toRad(toLat - fromLat);
+      const dLng = toRad(toLng - fromLng);
+      const a = Math.sin(dLat/2)**2 + Math.cos(toRad(fromLat)) * Math.cos(toRad(toLat)) * Math.sin(dLng/2)**2;
+      const distKm = (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))).toFixed(1);
+      const estMins = Math.round(distKm * 1.5); // rough driving estimate
 
-      if (!DS || !PS) { setError("Maps still loading — please wait a moment and try again"); setLoading(false); return; }
-
-      // Helper to wrap callback with timeout
-      const withTimeout = (fn, ms=15000) => Promise.race([
-        fn(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Request timed out — check your internet connection")), ms))
-      ]);
-
-      // 1. Get route — pass as address strings, much more reliable than LatLng objects
-      const originStr = fromPlace.formatted_address || fromPlace.name || "";
-      const destStr = toPlace.formatted_address || toPlace.name || "";
-
-      if (!originStr || !destStr) {
-        setError("Could not read addresses — please re-select from the dropdown");
-        setLoading(false); return;
-      }
-
-      const ds = new DS();
-      const routeResult = await withTimeout(() => new Promise((resolve, reject) => {
-        ds['route']({
-          origin: originStr,
-          destination: destStr,
-          travelMode: DMode['DRIVING'],
-        }, (result, status) => {
-          if (status === 'OK') resolve(result);
-          else reject(new Error(`Route error: ${status}`));
-        });
+      // Sample 5 points along the straight line between A and B
+      const samplePoints = [0.1, 0.25, 0.5, 0.75, 0.9].map(t => ({
+        lat: fromLat + (toLat - fromLat) * t,
+        lng: fromLng + (toLng - fromLng) * t,
       }));
 
-      const leg = routeResult['routes'][0]['legs'][0];
-      const path = routeResult['routes'][0]['overview_path'];
-
-      // 2. Search for McDonald's at midpoint and 2 other points along route
-      const indices = [
-        Math.floor(path.length * 0.25),
-        Math.floor(path.length * 0.5),
-        Math.floor(path.length * 0.75),
-      ];
-      const samplePoints = indices.map(i => path[i]);
-
+      // Search for McDonald's near each sample point using PlacesService
       const allMcds = new Map();
       const dummy = document.createElement('div');
-      const ps = new PS(dummy);
+
+      const searchRadius = Math.min(Math.max(distKm * 200, 3000), 10000); // scale radius to route length
 
       for (const point of samplePoints) {
-        try {
-          await withTimeout(() => new Promise(resolve => {
-            ps['nearbySearch']({
-              location: point,
-              radius: 8000,
-              keyword: "McDonald's",
-              type: 'restaurant'
-            }, (results, status) => {
-              if (results) {
-                results.forEach(p => {
-                  if (p.name.toLowerCase().includes('mcdonald') && !allMcds.has(p['place_id'])) {
-                    allMcds.set(p['place_id'], p);
-                  }
-                });
-              }
-              resolve();
-            });
-          }), 6000);
-        } catch {}
-      }
-
-      // 3. Build results
-      const mcdsArray = Array.from(allMcds.values()).slice(0, 8);
-
-      // Sort by position along route
-      const geoLib = gm['geometry'] && gm['geometry']['spherical'];
-      const mapped = mcdsArray.map(p => ({
-        placeId: p['place_id'],
-        name: p.name,
-        address: p.vicinity,
-        lat: p.geometry.location.lat(),
-        lng: p.geometry.location.lng(),
-        rating: getAvgRating(p['place_id']),
-        googleRating: p.rating,
-        location: p.geometry.location,
-      }));
-
-      if (geoLib) {
-        mapped.sort((a, b) => {
-          const getIdx = loc => {
-            let minDist = Infinity, minIdx = 0;
-            path.forEach((p, i) => {
-              const d = geoLib['computeDistanceBetween'](new gm['LatLng'](p.lat(), p.lng()), loc);
-              if (d < minDist) { minDist = d; minIdx = i; }
-            });
-            return minIdx;
-          };
-          return getIdx(a.location) - getIdx(b.location);
+        await new Promise(resolve => {
+          const latLng = new window['google']['maps']['LatLng'](point.lat, point.lng);
+          new window['google']['maps']['places']['PlacesService'](dummy)['nearbySearch']({
+            location: latLng,
+            radius: searchRadius,
+            keyword: "McDonald's",
+            type: 'restaurant'
+          }, (results) => {
+            if (results) {
+              results.forEach(p => {
+                if (p.name.toLowerCase().includes('mcdonald') && !allMcds.has(p['place_id'])) {
+                  allMcds.set(p['place_id'], p);
+                }
+              });
+            }
+            resolve();
+          });
+          // Auto-resolve after 5 seconds if callback doesn't fire
+          setTimeout(resolve, 5000);
         });
       }
 
+      // Sort results by position along route (closest to start first)
+      const mcdsArray = Array.from(allMcds.values()).slice(0, 8);
+      const mapped = mcdsArray.map(p => {
+        const pLat = p.geometry.location.lat();
+        const pLng = p.geometry.location.lng();
+        // Calculate how far along the route this McDonald's is (0 = start, 1 = end)
+        const routeProgress = ((pLat - fromLat) * (toLat - fromLat) + (pLng - fromLng) * (toLng - fromLng)) /
+          ((toLat - fromLat)**2 + (toLng - fromLng)**2 + 0.0001);
+        return {
+          placeId: p['place_id'],
+          name: p.name,
+          address: p.vicinity,
+          lat: pLat,
+          lng: pLng,
+          rating: getAvgRating(p['place_id']),
+          googleRating: p.rating,
+          routeProgress,
+        };
+      }).sort((a, b) => a.routeProgress - b.routeProgress);
+
+      // Build embed map URL
+      const originStr = fromPlace.formatted_address || fromPlace.name || "";
+      const destStr = toPlace.formatted_address || toPlace.name || "";
       const mapUrl = `https://www.google.com/maps/embed/v1/directions?key=${GOOGLE_API_KEY}&origin=${encodeURIComponent(originStr)}&destination=${encodeURIComponent(destStr)}&mode=driving`;
 
       setResults({
         mcds: mapped,
-        leg: { distance: leg['distance'], duration: leg['duration'] },
+        leg: { distance: { text: `~${distKm}km` }, duration: { text: `~${estMins} min` } },
         mapUrl
       });
 
     } catch(e) {
-      setError(`Could not find route: ${e.message}. Please try selecting addresses from the dropdown.`);
+      setError(`Something went wrong: ${e.message}`);
     }
     setLoading(false);
   };
