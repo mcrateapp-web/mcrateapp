@@ -235,7 +235,30 @@ function Toast({ msg }) {
   return <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background:DARK, color:W, padding:"10px 24px", borderRadius:50, fontSize:14, fontWeight:600, zIndex:9999, whiteSpace:"nowrap", boxShadow:"0 4px 20px rgba(0,0,0,0.3)", border:`2px solid ${Y}` }}>{msg}</div>;
 }
 
-// ─── Swipe Back Hook ──────────────────────────────────────────────────────────
+// ─── Short location name — strips McDonald's prefix, keeps suburb + city ───────
+function shortLocName(name) {
+  if (!name) return "Unknown";
+  // Remove McDonald's prefix variations
+  let short = name
+    .replace(/^mcdonald's\s*/i, "")
+    .replace(/^mcdonalds\s*/i, "")
+    .trim();
+  // Split by comma — first part is suburb/location name
+  const parts = short.split(",");
+  const suburb = parts[0].trim();
+  // Try to extract city/state from remaining parts
+  // e.g. "Westfield, Bondi Junction NSW 2022, Australia" → "Sydney"
+  // Map known NSW suburbs to Sydney, known states to cities
+  const stateMap = { "NSW": "Sydney", "VIC": "Melbourne", "QLD": "Brisbane", "WA": "Perth", "SA": "Adelaide", "TAS": "Hobart", "ACT": "Canberra", "NT": "Darwin" };
+  let city = "";
+  for (const part of parts) {
+    for (const [state, cityName] of Object.entries(stateMap)) {
+      if (part.includes(state)) { city = cityName; break; }
+    }
+    if (city) break;
+  }
+  return city ? `${suburb}, ${city}` : suburb;
+}
 function useSwipeBack(onBack) {
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
@@ -399,7 +422,7 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
           </div>
           <div style={{ fontSize:12, color:GRAY, marginTop:1, display:"flex", alignItems:"center", gap:4 }}>
             <MapPin size={11} color={GRAY}/>
-            <button onClick={()=>onOpenLocation&&onOpenLocation({ id:review.locationId, name:review.locationName, address:"" })} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontSize:12, color:R, fontWeight:600, fontFamily:"inherit" }}>{review.locationName}</button>
+            <button onClick={()=>onOpenLocation&&onOpenLocation({ id:review.locationId, name:review.locationName, address:"" })} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontSize:12, color:R, fontWeight:600, fontFamily:"inherit" }}>{shortLocName(review.locationName)}</button>
             <span>· {review.foodItem}</span>
           </div>
         </div>
@@ -868,7 +891,7 @@ function AddPostFlow({ onClose, onSubmit, locations, defaultLocationId }) {
 
   const submit = () => {
     if (!rating || !selectedLocation || images.length === 0) return;
-    onSubmit({ locationId:selectedLocation.id||selectedLocation.name, locationName:selectedLocation.fullName||selectedLocation.name, locationAddress:selectedLocation.address||"", foodItem, rating, categories:cats, text, images, image:images[0], verified:false });
+    onSubmit({ locationId:selectedLocation.id||selectedLocation.name, locationName:selectedLocation.fullName||selectedLocation.name, locationAddress:selectedLocation.address||"", lat:selectedLocation.lat||null, lng:selectedLocation.lng||null, foodItem, rating, categories:cats, text, images, image:images[0], verified:false });
     onClose();
   };
 
@@ -1131,17 +1154,19 @@ function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
   const locationMap = {};
   reviews.forEach(r => {
     if (!locationMap[r.locationId]) {
-      locationMap[r.locationId] = { id:r.locationId, name:r.locationName||r.locationId, address:"", ratings:[] };
+      locationMap[r.locationId] = { id:r.locationId, name:r.locationName||r.locationId, address:"", ratings:[], lat:r.lat, lng:r.lng };
     }
     locationMap[r.locationId].ratings.push(r.rating);
     if (r.locationName) locationMap[r.locationId].name = r.locationName;
+    if (r.lat) locationMap[r.locationId].lat = r.lat;
+    if (r.lng) locationMap[r.locationId].lng = r.lng;
   });
   const globalLocData = Object.values(locationMap).map(l => ({
     ...l,
     avg: (l.ratings.reduce((a,b)=>a+b,0)/l.ratings.length).toFixed(1),
     count: l.ratings.length,
     hasReviews: true,
-    distance: userCoords && l.lat && l.lng ? calcDistance(userCoords.lat, userCoords.lng, l.lat, l.lng) : "?"
+    distance: userCoords && l.lat && l.lng ? calcDistance(userCoords.lat, userCoords.lng, l.lat, l.lng) : null
   }));
 
   // Local: real nearby places from Google, enriched with McRate reviews
@@ -1164,9 +1189,11 @@ function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
       <div style={{ flex:1 }}>
         <div style={{ fontWeight:700, fontSize:15, color:DARK }}>{loc.name}</div>
         <div style={{ fontSize:12, color:GRAY, marginTop:2, display:"flex", alignItems:"center", gap:4 }}>
-          {showDistance
+          {loc.distance && showDistance
             ? <><MapPin size={11} color="#3b82f6"/><span style={{ color:"#3b82f6", fontWeight:600 }}>{loc.distance}km away</span></>
-            : <><MapPin size={11} color={GRAY}/><span>{loc.distance}km</span></>
+            : loc.distance
+            ? <><MapPin size={11} color={GRAY}/><span>{loc.distance}km</span></>
+            : <><MapPin size={11} color={GRAY}/><span>{loc.address||""}</span></>
           }
           {loc.hasReviews && <span>· {loc.count} review{loc.count!==1?"s":""}</span>}
         </div>
@@ -1350,33 +1377,103 @@ function JourneyTab({ reviews, onOpenLocation }) {
     if (!fromPlace || !toPlace) { setError("Please select both points from the dropdown suggestions"); return; }
     setLoading(true); setError(""); setResults(null);
     try {
-      const origin = `${fromPlace.geometry.location.lat()},${fromPlace.geometry.location.lng()}`;
-      const destination = `${toPlace.geometry.location.lat()},${toPlace.geometry.location.lng()}`;
-      const dirRes = await fetch(`https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving&key=${GOOGLE_API_KEY}`);
-      const dirData = await dirRes.json();
-      if (dirData.status !== "OK") { setError(`Could not find route: ${dirData.status}. Please check your points.`); setLoading(false); return; }
-      const leg = dirData.routes[0].legs[0];
-      const steps = leg.steps;
-      const sampleSteps = steps.filter((_, i) => i % Math.max(1, Math.floor(steps.length / 5)) === 0).slice(0, 5);
+      const gm = window['google'] && window['google']['maps'];
+      if (!gm) { setError("Maps not loaded — please refresh and try again"); setLoading(false); return; }
+
+      // Use bracket notation throughout to survive minification
+      const DS = gm['DirectionsService'];
+      const DMode = gm['TravelMode'];
+      const PS = gm['places'] && gm['places']['PlacesService'];
+      const PSS = gm['places'] && gm['places']['PlacesServiceStatus'];
+
+      if (!DS) { setError("Maps still loading — please wait a moment and try again"); setLoading(false); return; }
+
+      const ds = new DS();
+      const routeResult = await new Promise((resolve, reject) => {
+        ds['route']({
+          origin: fromPlace.geometry.location,
+          destination: toPlace.geometry.location,
+          travelMode: DMode['DRIVING'],
+        }, (result, status) => {
+          if (status === 'OK') resolve(result);
+          else reject(new Error(status));
+        });
+      });
+
+      const leg = routeResult['routes'][0]['legs'][0];
+      const path = routeResult['routes'][0]['overview_path'];
+      const totalPoints = path.length;
+
+      // Sample 5 points along the route
+      const samplePoints = [];
+      for (let i = 0; i < 5; i++) {
+        samplePoints.push(path[Math.floor((i / 4) * (totalPoints - 1))]);
+      }
+
       const allMcds = new Map();
-      await Promise.all(sampleSteps.map(async step => {
-        const lat = step.start_location.lat;
-        const lng = step.start_location.lng;
-        try {
-          const res = await fetch(`https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=5000&keyword=McDonald%27s&type=restaurant&key=${GOOGLE_API_KEY}`);
-          const data = await res.json();
-          (data.results || []).forEach(p => { if (p.name.toLowerCase().includes("mcdonald") && !allMcds.has(p.place_id)) allMcds.set(p.place_id, p); });
-        } catch {}
-      }));
+      const dummy = document.createElement('div');
+      const ps = new PS(dummy);
+
+      await Promise.all(samplePoints.map(point => new Promise(resolve => {
+        ps['nearbySearch']({
+          location: point,
+          radius: 5000,
+          keyword: "McDonald's",
+          type: 'restaurant'
+        }, (results, status) => {
+          if (status === PSS['OK'] && results) {
+            results.forEach(p => {
+              if (p.name.toLowerCase().includes('mcdonald') && !allMcds.has(p['place_id'])) {
+                allMcds.set(p['place_id'], p);
+              }
+            });
+          }
+          resolve();
+        });
+      })));
+
       const mcdsArray = Array.from(allMcds.values()).slice(0, 10);
       const mapped = mcdsArray.map(p => ({
-        placeId: p.place_id, name: p.name, address: p.vicinity,
-        lat: p.geometry.location.lat, lng: p.geometry.location.lng,
-        rating: getAvgRating(p.place_id), googleRating: p.rating,
+        placeId: p['place_id'],
+        name: p.name,
+        address: p.vicinity,
+        lat: p.geometry.location.lat(),
+        lng: p.geometry.location.lng(),
+        rating: getAvgRating(p['place_id']),
+        googleRating: p.rating,
+        location: p.geometry.location,
       }));
+
+      // Sort by position along route
+      const geoLib = gm['geometry'] && gm['geometry']['spherical'];
+      if (geoLib) {
+        const pathLatLngs = path.map(p => new gm['LatLng'](p.lat(), p.lng()));
+        mapped.sort((a, b) => {
+          const getIdx = loc => {
+            let minDist = Infinity, minIdx = 0;
+            pathLatLngs.forEach((p, i) => {
+              const d = geoLib['computeDistanceBetween'](p, loc);
+              if (d < minDist) { minDist = d; minIdx = i; }
+            });
+            return minIdx;
+          };
+          return getIdx(a.location) - getIdx(b.location);
+        });
+      }
+
+      const origin = `${fromPlace.geometry.location.lat()},${fromPlace.geometry.location.lng()}`;
+      const destination = `${toPlace.geometry.location.lat()},${toPlace.geometry.location.lng()}`;
       const mapUrl = `https://www.google.com/maps/embed/v1/directions?key=${GOOGLE_API_KEY}&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&mode=driving`;
-      setResults({ mcds: mapped, leg: { distance: leg.distance, duration: leg.duration }, mapUrl });
-    } catch(e) { setError("Could not find route. Please check your start and end points."); }
+
+      setResults({
+        mcds: mapped,
+        leg: { distance: leg['distance'], duration: leg['duration'] },
+        mapUrl
+      });
+
+    } catch(e) {
+      setError(`Could not find route: ${e.message}. Please try selecting addresses from the dropdown.`);
+    }
     setLoading(false);
   };
 
@@ -2228,7 +2325,7 @@ export default function App() {
         const url=await sb.uploadPhoto(data.images[i],path,token);
         if (url) uploadedUrls.push(url);
       }
-      if (data.locationId) await sb.insert("locations",{id:data.locationId, name:data.locationName||data.locationId, address:data.locationAddress||""}, token).catch(()=>{});
+      if (data.locationId) await sb.insert("locations",{id:data.locationId, name:data.locationName||data.locationId, address:data.locationAddress||"", lat:data.lat||null, lng:data.lng||null}, token).catch(()=>{});
       const result=await sb.insert("reviews",{user_id:user.id,location_id:data.locationId,food_item:data.foodItem,rating:data.rating,text:data.text,images:uploadedUrls.length>0?uploadedUrls:data.images,categories:data.categories,verified:false},token);
       const newReview={id:result[0]?.id||Date.now().toString(),locationId:data.locationId,locationName:data.locationName||data.locationId,userId:user.id,userName:user.name,userTier:user.tier,foodItem:data.foodItem,rating:data.rating,text:data.text,images:uploadedUrls.length>0?uploadedUrls:data.images,image:(uploadedUrls[0]||data.images?.[0]),categories:data.categories,verified:false,agrees:0,disagrees:0,comments:[],reactions:{},date:new Date().toISOString()};
       setReviews(rs=>[newReview,...rs]);
