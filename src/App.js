@@ -1339,7 +1339,10 @@ function JourneyTab({ reviews, onOpenLocation }) {
 
   useEffect(() => {
     const check = setInterval(() => {
-      if (window.google?.maps?.places?.Autocomplete) { setMapsReady(true); clearInterval(check); }
+      if (window.google?.maps?.places?.Autocomplete && window.google?.maps?.DirectionsService) {
+        setMapsReady(true);
+        clearInterval(check);
+      }
     }, 200);
     return () => clearInterval(check);
   }, []);
@@ -1388,9 +1391,9 @@ function JourneyTab({ reviews, onOpenLocation }) {
       if (!DS || !PS) { setError("Maps still loading — please wait a moment and try again"); setLoading(false); return; }
 
       // Helper to wrap callback with timeout
-      const withTimeout = (fn, ms=8000) => Promise.race([
+      const withTimeout = (fn, ms=15000) => Promise.race([
         fn(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Request timed out — check your internet connection")), ms))
       ]);
 
       // 1. Get route
@@ -1511,10 +1514,11 @@ function JourneyTab({ reviews, onOpenLocation }) {
               style={{ width:"100%", padding:"12px 14px 12px 36px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none" }}/>
           </div>
           {error && <div style={{ fontSize:13, color:R, fontWeight:600 }}>{error}</div>}
-          <button onClick={findRoute} disabled={loading || !fromPlace || !toPlace}
-            style={{ background:fromPlace&&toPlace?R:LG, color:fromPlace&&toPlace?W:GRAY, border:"none", borderRadius:50, padding:"12px 0", fontWeight:700, fontSize:15, cursor:fromPlace&&toPlace?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8, fontFamily:"inherit" }}>
-            <Navigation size={16} color={fromPlace&&toPlace?W:GRAY}/>
-            {loading ? "Finding McDonald's on route…" : "Find McDonald's on Route"}
+          {!mapsReady && <div style={{ fontSize:12, color:GRAY, textAlign:"center" }}>Maps loading — please wait…</div>}
+          <button onClick={findRoute} disabled={loading || !mapsReady || !fromPlace || !toPlace}
+            style={{ background:fromPlace&&toPlace&&mapsReady?R:LG, color:fromPlace&&toPlace&&mapsReady?W:GRAY, border:"none", borderRadius:50, padding:"12px 0", fontWeight:700, fontSize:15, cursor:fromPlace&&toPlace&&mapsReady?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8, fontFamily:"inherit" }}>
+            <Navigation size={16} color={fromPlace&&toPlace&&mapsReady?W:GRAY}/>
+            {loading ? "Finding McDonald's on route…" : !mapsReady ? "Maps loading…" : "Find McDonald's on Route"}
           </button>
         </div>
       </div>
