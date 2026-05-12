@@ -1340,7 +1340,10 @@ function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
       locationMap[r.locationId] = { id:r.locationId, name:r.locationName||r.locationId, address:r.locationName||"", ratings:[], lat:r.lat, lng:r.lng };
     }
     locationMap[r.locationId].ratings.push(r.rating);
-    if (r.locationName) locationMap[r.locationId].name = r.locationName;
+    if (r.locationName) {
+      locationMap[r.locationId].name = shortLocName(r.locationName);
+      locationMap[r.locationId].address = r.locationName; // full name for flag detection
+    }
     if (r.lat) locationMap[r.locationId].lat = r.lat;
     if (r.lng) locationMap[r.locationId].lng = r.lng;
   });
@@ -1371,7 +1374,7 @@ function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
       {rank && <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:28, color:!loc.hasReviews?LG:showDistance?"#3b82f6":isBest?"#22c55e":R, width:36, textAlign:"center" }}>#{rank}</div>}
       <div style={{ flex:1 }}>
         <div style={{ fontWeight:700, fontSize:15, color:DARK, display:"flex", alignItems:"center", gap:6 }}>
-          {countryFlag(loc.address || loc.name) && <span style={{ fontSize:16 }}>{countryFlag(loc.address || loc.name)}</span>}
+          {(() => { const flag = countryFlag(loc.address || "") || countryFlag(loc.name || ""); return flag ? <span style={{ fontSize:16 }}>{flag}</span> : null; })()}
           {loc.name}
         </div>
         <div style={{ fontSize:12, color:GRAY, marginTop:2, display:"flex", alignItems:"center", gap:4 }}>
@@ -2626,7 +2629,8 @@ export default function App() {
             </button>
           ))}
         </div>
-        {editingReview && <EditReviewModal review={editingReview} onClose={()=>setEditingReview(null)} onSave={handleEditReview} token={token}/>} location={locationPage} reviews={reviews} onBack={()=>setLocationPage(null)} onAddReview={loc=>{setAddPostLocation(loc);setShowAddPost(true);}} onAddComment={handleAddComment} onReact={handleReact} currentUser={currentUser}/>}
+        {editingReview && <EditReviewModal review={editingReview} onClose={()=>setEditingReview(null)} onSave={handleEditReview} token={token}/>}
+        {locationPage&&<LocationPage location={locationPage} reviews={reviews} onBack={()=>setLocationPage(null)} onAddReview={loc=>{setAddPostLocation(loc);setShowAddPost(true);}} onAddComment={handleAddComment} onReact={handleReact} currentUser={currentUser}/>}
         {menuItemPage&&<MenuItemPage item={menuItemPage} reviews={reviews} onBack={()=>setMenuItemPage(null)} onAddComment={handleAddComment} onReact={handleReact} currentUser={currentUser}/>}
         {userProfilePage&&<UserProfilePage userId={userProfilePage.userId} userName={userProfilePage.userName} userTier={userProfilePage.userTier} reviews={reviews} onBack={()=>setUserProfilePage(null)}/>}
         {showAddPost&&<AddPostFlow onClose={()=>{setShowAddPost(false);setAddPostLocation(null);}} onSubmit={handleSubmitPost} locations={MOCK_LOCATIONS} defaultLocationId={addPostLocation?.id}/>}
