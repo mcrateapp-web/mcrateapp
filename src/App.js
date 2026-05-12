@@ -235,7 +235,30 @@ function Toast({ msg }) {
   return <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background:DARK, color:W, padding:"10px 24px", borderRadius:50, fontSize:14, fontWeight:600, zIndex:9999, whiteSpace:"nowrap", boxShadow:"0 4px 20px rgba(0,0,0,0.3)", border:`2px solid ${Y}` }}>{msg}</div>;
 }
 
-// ─── Short location name — strips McDonald's prefix, keeps suburb + city ───────
+// ─── Country flag from location name ─────────────────────────────────────────
+function countryFlag(name) {
+  if (!name) return "";
+  const n = name.toLowerCase();
+  if (n.includes("australia") || n.includes(" nsw") || n.includes(" vic") || n.includes(" qld") || n.includes(" wa,") || n.includes(" sa,") || n.includes(" act") || n.includes(", sydney") || n.includes(", melbourne") || n.includes(", brisbane") || n.includes(", perth")) return "🇦🇺";
+  if (n.includes("united kingdom") || n.includes(", uk") || n.includes(", england") || n.includes(", london") || n.includes(", scotland") || n.includes(", wales")) return "🇬🇧";
+  if (n.includes("united states") || n.includes(", usa") || n.includes(", new york") || n.includes(", los angeles") || n.includes(", chicago") || n.includes(", ca,") || n.includes(", ny,") || n.includes(", tx,") || n.includes(", fl,")) return "🇺🇸";
+  if (n.includes("canada") || n.includes(", ontario") || n.includes(", toronto") || n.includes(", vancouver")) return "🇨🇦";
+  if (n.includes("new zealand") || n.includes(", auckland") || n.includes(", wellington")) return "🇳🇿";
+  if (n.includes("germany") || n.includes(", berlin") || n.includes(", münchen") || n.includes(", hamburg")) return "🇩🇪";
+  if (n.includes("france") || n.includes(", paris") || n.includes(", lyon") || n.includes(", marseille")) return "🇫🇷";
+  if (n.includes("japan") || n.includes(", tokyo") || n.includes(", osaka") || n.includes(", kyoto")) return "🇯🇵";
+  if (n.includes("india") || n.includes(", mumbai") || n.includes(", delhi") || n.includes(", bangalore")) return "🇮🇳";
+  if (n.includes("singapore")) return "🇸🇬";
+  if (n.includes("ireland") || n.includes(", dublin")) return "🇮🇪";
+  if (n.includes("netherlands") || n.includes(", amsterdam")) return "🇳🇱";
+  if (n.includes("spain") || n.includes(", madrid") || n.includes(", barcelona")) return "🇪🇸";
+  if (n.includes("italy") || n.includes(", rome") || n.includes(", milan")) return "🇮🇹";
+  if (n.includes("brazil") || n.includes(", são paulo") || n.includes(", rio")) return "🇧🇷";
+  if (n.includes("china") || n.includes(", beijing") || n.includes(", shanghai")) return "🇨🇳";
+  if (n.includes("south africa") || n.includes(", johannesburg") || n.includes(", cape town")) return "🇿🇦";
+  if (n.includes("uae") || n.includes("dubai") || n.includes("abu dhabi")) return "🇦🇪";
+  return "";
+}
 function shortLocName(name) {
   if (!name) return "Unknown";
   // Remove McDonald's prefix variations
@@ -374,8 +397,130 @@ function CommentThread({ comment, onReply, depth=0, onOpenUser }) {
   );
 }
 
-// ─── Feed Post ────────────────────────────────────────────────────────────────
-function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onReact, onReport, onOpenUser, onOpenLocation }) {
+// ─── Edit Review Modal ────────────────────────────────────────────────────────
+function EditReviewModal({ review, onClose, onSave, token }) {
+  const [rating, setRating] = useState(review.rating);
+  const [hover, setHover] = useState(0);
+  const [text, setText] = useState(review.text || "");
+  const [foodItem, setFoodItem] = useState(review.foodItem);
+  const [selectedLocation, setSelectedLocation] = useState({ id: review.locationId, name: review.locationName, fullName: review.locationName });
+  const [images, setImages] = useState(review.images || (review.image ? [review.image] : []));
+  const [previewIdx, setPreviewIdx] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
+
+  const handleFiles = e => {
+    const files = Array.from(e.target.files).slice(0, 3 - images.length);
+    files.forEach(f => {
+      const reader = new FileReader();
+      reader.onload = ev => setImages(prev => [...prev, ev.target.result].slice(0, 3));
+      reader.readAsDataURL(f);
+    });
+  };
+
+  const removeImage = idx => {
+    setImages(prev => prev.filter((_, i) => i !== idx));
+    setPreviewIdx(p => Math.min(p, Math.max(0, images.length - 2)));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    // Upload any new base64 images
+    let finalImages = [];
+    for (const img of images) {
+      if (img.startsWith("data:") && token) {
+        const uploaded = await sb.uploadPhoto(img, `${review.userId}/${Date.now()}_edit.jpg`, token).catch(() => null);
+        finalImages.push(uploaded || img);
+      } else {
+        finalImages.push(img);
+      }
+    }
+    await onSave(review.id, {
+      rating, text, foodItem,
+      locationId: selectedLocation?.id || review.locationId,
+      locationName: selectedLocation?.fullName || selectedLocation?.name || review.locationName,
+      images: finalImages,
+      image: finalImages[0] || review.image,
+    });
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:700, display:"flex", alignItems:"flex-end", justifyContent:"center" }} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{ background:W, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", maxHeight:"90vh", overflow:"auto" }}>
+        {/* Header */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"20px 24px 16px", borderBottom:`1px solid ${LG}` }}>
+          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, color:DARK, letterSpacing:1.5 }}>EDIT REVIEW</div>
+          <button onClick={onClose} style={{ background:LG, border:"none", width:30, height:30, borderRadius:"50%", cursor:"pointer", fontSize:16 }}>×</button>
+        </div>
+
+        <div style={{ padding:"16px 24px 32px", display:"flex", flexDirection:"column", gap:16 }}>
+          {/* Photos */}
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:GRAY, textTransform:"uppercase", letterSpacing:0.5, marginBottom:8 }}>Photos</div>
+            <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+              {images.map((img, i) => (
+                <div key={i} style={{ position:"relative" }}>
+                  <img src={img} alt="" onClick={()=>setPreviewIdx(i)}
+                    style={{ width:80, height:80, borderRadius:12, objectFit:"cover", border:i===previewIdx?`2.5px solid ${R}`:"2.5px solid transparent", cursor:"pointer" }}/>
+                  <button onClick={()=>removeImage(i)} style={{ position:"absolute", top:-6, right:-6, width:20, height:20, borderRadius:"50%", background:R, border:`2px solid ${W}`, color:W, fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
+                  {i===0 && <div style={{ position:"absolute", bottom:0, left:0, right:0, background:Y, borderRadius:"0 0 10px 10px", fontSize:8, fontWeight:700, textAlign:"center", color:DARK, padding:"2px 0" }}>COVER</div>}
+                </div>
+              ))}
+              {images.length < 3 && (
+                <button onClick={()=>fileRef.current?.click()} style={{ width:80, height:80, borderRadius:12, border:`2px dashed ${LG}`, background:BG, cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4, color:GRAY }}>
+                  <Camera size={20} color={GRAY}/>
+                  <span style={{ fontSize:10, fontWeight:600 }}>Add</span>
+                </button>
+              )}
+            </div>
+            <input ref={fileRef} type="file" accept="image/*" multiple style={{ display:"none" }} onChange={handleFiles}/>
+          </div>
+
+          {/* Location */}
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:GRAY, textTransform:"uppercase", letterSpacing:0.5, marginBottom:6 }}>Location</div>
+            <LocationSearch onSelect={setSelectedLocation} defaultLocation={{ name: review.locationName }}/>
+          </div>
+
+          {/* Menu item */}
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:GRAY, textTransform:"uppercase", letterSpacing:0.5, marginBottom:6 }}>Menu Item</div>
+            <select value={foodItem} onChange={e=>setFoodItem(e.target.value)} style={{ width:"100%", padding:"10px 14px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", outline:"none", background:W }}>
+              {MENU_ITEMS.map(m=><option key={m}>{m}</option>)}
+            </select>
+          </div>
+
+          {/* Rating */}
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:GRAY, textTransform:"uppercase", letterSpacing:0.5, marginBottom:8 }}>Star Rating</div>
+            <div style={{ display:"flex", gap:6 }}>
+              {[1,2,3,4,5].map(n=>(
+                <button key={n} onMouseEnter={()=>setHover(n)} onMouseLeave={()=>setHover(0)} onClick={()=>setRating(n)}
+                  style={{ fontSize:40, background:"none", border:"none", cursor:"pointer", color:n<=(hover||rating)?Y:LG, transition:"color 0.1s", padding:0 }}>★</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Caption */}
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:GRAY, textTransform:"uppercase", letterSpacing:0.5, marginBottom:6 }}>Caption</div>
+            <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Update your caption…"
+              style={{ width:"100%", minHeight:80, padding:"10px 14px", border:`1.5px solid ${LG}`, borderRadius:12, fontSize:14, fontFamily:"inherit", resize:"vertical", outline:"none" }}/>
+          </div>
+
+          <button onClick={handleSave} disabled={saving} style={{ background:R, color:W, border:"none", borderRadius:50, padding:"14px 0", fontWeight:700, fontSize:15, cursor:"pointer", fontFamily:"inherit" }}>
+            {saving ? "Saving…" : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onReact, onReport, onOpenUser, onOpenLocation, onEdit, onDelete }) {
   const [showComments, setShowComments] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [commentText, setCommentText] = useState("");
@@ -383,7 +528,9 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
   const [agrees, setAgrees] = useState(review.agrees);
   const [disagrees, setDisagrees] = useState(review.disagrees);
   const [showMenu, setShowMenu] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const inputRef = useRef(null);
+  const isOwner = currentUser?.id && review.userId === currentUser.id;
 
   const countComments = arr => (arr||[]).reduce((a,c)=>a+1+countComments(c.replies),0);
   const total = countComments(review.comments);
@@ -448,18 +595,43 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
               <MoreHorizontal size={18} color={GRAY}/>
             </button>
             {showMenu && (
-              <div style={{ position:"absolute", right:0, top:"100%", background:W, borderRadius:12, boxShadow:"0 4px 24px rgba(0,0,0,0.15)", zIndex:50, minWidth:160, border:`1px solid ${LG}`, overflow:"hidden" }}>
-                <button onClick={()=>{handleShare();setShowMenu(false);}} style={{ display:"block", width:"100%", padding:"12px 16px", textAlign:"left", background:"none", border:"none", cursor:"pointer", fontSize:14, fontFamily:"inherit", borderBottom:`1px solid ${LG}`, display:"flex", alignItems:"center", gap:8 }}>
-                  <Share2 size={15} color={GRAY}/> Share
-                </button>
-                <button onClick={()=>{onReport&&onReport(review);setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", textAlign:"left", background:"none", border:"none", cursor:"pointer", fontSize:14, color:R, fontFamily:"inherit" }}>
-                  <Flag size={15} color={R}/> Report
-                </button>
+              <div style={{ position:"absolute", right:0, top:"100%", background:W, borderRadius:12, boxShadow:"0 4px 24px rgba(0,0,0,0.15)", zIndex:50, minWidth:170, border:`1px solid ${LG}`, overflow:"hidden" }}>
+                {isOwner ? <>
+                  <button onClick={()=>{onEdit&&onEdit(review);setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, fontFamily:"inherit", borderBottom:`1px solid ${LG}`, color:DARK }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    Edit Review
+                  </button>
+                  <button onClick={()=>{setConfirmDelete(true);setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, color:R, fontFamily:"inherit" }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    Delete Review
+                  </button>
+                </> : <>
+                  <button onClick={()=>{handleShare();setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, fontFamily:"inherit", borderBottom:`1px solid ${LG}`, color:DARK }}>
+                    <Share2 size={15} color={GRAY}/> Share
+                  </button>
+                  <button onClick={()=>{onReport&&onReport(review);setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, color:R, fontFamily:"inherit" }}>
+                    <Flag size={15} color={R}/> Report
+                  </button>
+                </>}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Delete confirmation */}
+      {confirmDelete && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:700, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }} onClick={()=>setConfirmDelete(false)}>
+          <div style={{ background:W, borderRadius:20, padding:24, width:"100%", maxWidth:340 }} onClick={e=>e.stopPropagation()}>
+            <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:22, color:DARK, letterSpacing:1, marginBottom:8 }}>DELETE REVIEW?</div>
+            <div style={{ fontSize:14, color:GRAY, marginBottom:20, lineHeight:1.5 }}>This will permanently remove your review, photos and all comments. This cannot be undone.</div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={()=>setConfirmDelete(false)} style={{ flex:1, background:LG, border:"none", borderRadius:50, padding:"12px 0", fontWeight:700, fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>Cancel</button>
+              <button onClick={()=>{setConfirmDelete(false);onDelete&&onDelete(review.id);}} style={{ flex:1, background:R, color:W, border:"none", borderRadius:50, padding:"12px 0", fontWeight:700, fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Photo carousel */}
       <PhotoCarousel review={review}/>
@@ -599,7 +771,7 @@ function ReportModal({ review, onClose, onReport }) {
 }
 
 // ─── Feed Tab ─────────────────────────────────────────────────────────────────
-function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, onOpenUser, onOpenLocation, showOnboarding, onDismissOnboarding }) {
+function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, onOpenUser, onOpenLocation, showOnboarding, onDismissOnboarding, onEdit, onDelete }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [showSearch, setShowSearch] = useState(false);
@@ -697,7 +869,7 @@ function FeedTab({ reviews, user, onAgree, onDisagree, onAddComment, onReact, on
           </div>
         )}
 
-        {filtered.map(r=><FeedPost key={r.id} review={r} currentUser={user} onAgree={(currentVote)=>onAgree(r.id,currentVote)} onDisagree={(currentVote)=>onDisagree(r.id,currentVote)} onAddComment={onAddComment} onReact={onReact} onReport={()=>setReportTarget(r)} onOpenUser={onOpenUser} onOpenLocation={onOpenLocation}/>)}
+        {filtered.map(r=><FeedPost key={r.id} review={r} currentUser={user} onAgree={(currentVote)=>onAgree(r.id,currentVote)} onDisagree={(currentVote)=>onDisagree(r.id,currentVote)} onAddComment={onAddComment} onReact={onReact} onReport={()=>setReportTarget(r)} onOpenUser={onOpenUser} onOpenLocation={onOpenLocation} onEdit={onEdit} onDelete={onDelete}/>)}
       </div>
 
       {reportTarget && <ReportModal review={reportTarget} onClose={()=>setReportTarget(null)} onReport={handleReport}/>}
@@ -1165,7 +1337,7 @@ function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
   const locationMap = {};
   reviews.forEach(r => {
     if (!locationMap[r.locationId]) {
-      locationMap[r.locationId] = { id:r.locationId, name:r.locationName||r.locationId, address:"", ratings:[], lat:r.lat, lng:r.lng };
+      locationMap[r.locationId] = { id:r.locationId, name:r.locationName||r.locationId, address:r.locationName||"", ratings:[], lat:r.lat, lng:r.lng };
     }
     locationMap[r.locationId].ratings.push(r.rating);
     if (r.locationName) locationMap[r.locationId].name = r.locationName;
@@ -1198,7 +1370,10 @@ function BestWorstTab({ reviews, onOpenLocation, onOpenMenuItem }) {
     <div onClick={()=>onOpenLocation(loc)} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px", background:W, borderRadius:16, marginBottom:8, boxShadow:"0 2px 12px rgba(0,0,0,0.06)", borderLeft:`4px solid ${!loc.hasReviews?"#CBD5E1":showDistance?"#3b82f6":isBest?"#22c55e":R}`, cursor:"pointer" }}>
       {rank && <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:28, color:!loc.hasReviews?LG:showDistance?"#3b82f6":isBest?"#22c55e":R, width:36, textAlign:"center" }}>#{rank}</div>}
       <div style={{ flex:1 }}>
-        <div style={{ fontWeight:700, fontSize:15, color:DARK }}>{loc.name}</div>
+        <div style={{ fontWeight:700, fontSize:15, color:DARK, display:"flex", alignItems:"center", gap:6 }}>
+          {countryFlag(loc.address || loc.name) && <span style={{ fontSize:16 }}>{countryFlag(loc.address || loc.name)}</span>}
+          {loc.name}
+        </div>
         <div style={{ fontSize:12, color:GRAY, marginTop:2, display:"flex", alignItems:"center", gap:4 }}>
           {loc.distance && showDistance
             ? <><MapPin size={11} color="#3b82f6"/><span style={{ color:"#3b82f6", fontWeight:600 }}>{loc.distance}km away</span></>
@@ -2316,7 +2491,25 @@ export default function App() {
     } catch { showToast("Could not post comment."); }
   };
 
-  const handleReact = (reviewId,reaction) => {
+  const [editingReview, setEditingReview] = useState(null);
+
+  const handleDeleteReview = async (reviewId) => {
+    if (token) await sb.delete("reviews", `id=eq.${reviewId}`, token).catch(()=>{});
+    setReviews(rs => rs.filter(r => r.id !== reviewId));
+    showToast("Review deleted");
+  };
+
+  const handleEditReview = async (reviewId, updates) => {
+    if (token) await sb.update("reviews", `id=eq.${reviewId}`, {
+      rating: updates.rating,
+      text: updates.text,
+      food_item: updates.foodItem,
+      location_id: updates.locationId,
+      images: updates.images,
+    }, token).catch(()=>{});
+    setReviews(rs => rs.map(r => r.id === reviewId ? { ...r, ...updates } : r));
+    showToast("Review updated!");
+  };
     setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,reactions:{...(r.reactions||{}),[reaction]:((r.reactions||{})[reaction]||0)+1}}:r));
   };
 
@@ -2403,7 +2596,7 @@ export default function App() {
           </div>
         </div>
         <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
-          {tab==="home"&&<FeedTab reviews={reviews} user={currentUser} onAgree={handleAgree} onDisagree={handleDisagree} onAddComment={handleAddComment} onReact={handleReact} onOpenUser={handleOpenUser} onOpenLocation={setLocationPage} showOnboarding={showOnboarding} onDismissOnboarding={()=>setShowOnboarding(false)}/>}
+          {tab==="home"&&<FeedTab reviews={reviews} user={currentUser} onAgree={handleAgree} onDisagree={handleDisagree} onAddComment={handleAddComment} onReact={handleReact} onOpenUser={handleOpenUser} onOpenLocation={setLocationPage} onEdit={setEditingReview} onDelete={handleDeleteReview} showOnboarding={showOnboarding} onDismissOnboarding={()=>setShowOnboarding(false)}/>}
           {tab==="bestworst"&&<BestWorstTab reviews={reviews} onOpenLocation={setLocationPage} onOpenMenuItem={setMenuItemPage}/>}
           {tab==="journey"&&<JourneyTab reviews={reviews} onOpenLocation={setLocationPage}/>}
           {tab==="profile"&&(user
@@ -2433,7 +2626,7 @@ export default function App() {
             </button>
           ))}
         </div>
-        {locationPage&&<LocationPage location={locationPage} reviews={reviews} onBack={()=>setLocationPage(null)} onAddReview={loc=>{setAddPostLocation(loc);setShowAddPost(true);}} onAddComment={handleAddComment} onReact={handleReact} currentUser={currentUser}/>}
+        {editingReview && <EditReviewModal review={editingReview} onClose={()=>setEditingReview(null)} onSave={handleEditReview} token={token}/>} location={locationPage} reviews={reviews} onBack={()=>setLocationPage(null)} onAddReview={loc=>{setAddPostLocation(loc);setShowAddPost(true);}} onAddComment={handleAddComment} onReact={handleReact} currentUser={currentUser}/>}
         {menuItemPage&&<MenuItemPage item={menuItemPage} reviews={reviews} onBack={()=>setMenuItemPage(null)} onAddComment={handleAddComment} onReact={handleReact} currentUser={currentUser}/>}
         {userProfilePage&&<UserProfilePage userId={userProfilePage.userId} userName={userProfilePage.userName} userTier={userProfilePage.userTier} reviews={reviews} onBack={()=>setUserProfilePage(null)}/>}
         {showAddPost&&<AddPostFlow onClose={()=>{setShowAddPost(false);setAddPostLocation(null);}} onSubmit={handleSubmitPost} locations={MOCK_LOCATIONS} defaultLocationId={addPostLocation?.id}/>}
