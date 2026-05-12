@@ -324,7 +324,9 @@ function CommentThread({ comment, onReply, depth=0, onOpenUser }) {
   const [showReply, setShowReply] = useState(false);
   const [text, setText] = useState("");
   const [showReplies, setShowReplies] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const replies = comment.replies||[];
+  const isLong = comment.text && comment.text.length > 120;
 
   const submit = () => { if (!text.trim()) return; onReply(comment.id, text.trim()); setText(""); setShowReply(false); };
 
@@ -337,7 +339,16 @@ function CommentThread({ comment, onReply, depth=0, onOpenUser }) {
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ background:BG, borderRadius:"0 14px 14px 14px", padding:"8px 12px", display:"inline-block", maxWidth:"100%" }}>
             <button onClick={()=>onOpenUser&&onOpenUser({ userId:comment.userId, userName:comment.user, userTier:comment.userTier })} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontWeight:700, fontSize:13, color:DARK, fontFamily:"inherit" }}>{comment.user} </button>
-            <span style={{ fontSize:13, color:"#333", lineHeight:1.4 }}>{comment.text}</span>
+            <span style={{ fontSize:13, color:"#333", lineHeight:1.4,
+              ...(isLong && !expanded ? {
+                display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical", overflow:"hidden"
+              } : {})
+            }}>{comment.text}</span>
+            {isLong && (
+              <button onClick={()=>setExpanded(v=>!v)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontSize:12, fontWeight:700, color:GRAY, display:"block", marginTop:3, fontFamily:"inherit" }}>
+                {expanded ? "less" : "more"}
+              </button>
+            )}
           </div>
           <div style={{ display:"flex", gap:12, alignItems:"center", marginTop:4, paddingLeft:4 }}>
             <span style={{ fontSize:11, color:GRAY }}>{timeAgo(comment.date)}</span>
