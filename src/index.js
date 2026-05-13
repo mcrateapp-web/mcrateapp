@@ -3,4 +3,11 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+
+if (window.location.pathname === '/kingofmaccas') {
+  import('./Admin').then(m => {
+    root.render(React.createElement(m.default));
+  });
+} else {
+  root.render(React.createElement(App));
+}
