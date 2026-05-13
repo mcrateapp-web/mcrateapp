@@ -516,6 +516,20 @@ function EditReviewModal({ review, onClose, onSave, token }) {
 }
 
 
+function ReviewCaption({ text, userName, onOpenUser, review }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text && text.length > 120;
+  return (
+    <div style={{ padding:"0 14px 8px", fontSize:14, color:"#222", lineHeight:1.5 }}>
+      <button onClick={()=>onOpenUser&&onOpenUser(review)} style={{ fontWeight:700, background:"none", border:"none", cursor:"pointer", padding:0, fontSize:14, fontFamily:"inherit", color:DARK }}>{userName} </button>
+      {isLong && !expanded
+        ? <>{text.slice(0,120)}… <button onClick={()=>setExpanded(true)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontSize:13, fontWeight:700, color:GRAY, fontFamily:"inherit" }}>more</button></>
+        : <>{text}{isLong && <> <button onClick={()=>setExpanded(false)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontSize:13, fontWeight:700, color:GRAY, fontFamily:"inherit" }}>less</button></>}</>
+      }
+    </div>
+  );
+}
+
 function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onReact, onReport, onOpenUser, onOpenLocation, onEdit, onDelete }) {
   const [showComments, setShowComments] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -656,7 +670,7 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
       </div>
 
       {/* Caption */}
-      {review.text&&<div style={{ padding:"0 14px 8px", fontSize:14, color:"#222", lineHeight:1.5 }}><button onClick={()=>onOpenUser&&onOpenUser(review)} style={{ fontWeight:700, background:"none", border:"none", cursor:"pointer", padding:0, fontSize:14, fontFamily:"inherit", color:DARK }}>{review.userName} </button>{review.text}</div>}
+      {review.text&&<ReviewCaption text={review.text} userName={review.userName} onOpenUser={onOpenUser} review={review}/>}
 
       {/* View comments toggle */}
       {total>0&&!showComments&&(
