@@ -362,16 +362,12 @@ function CommentThread({ comment, onReply, depth=0, onOpenUser }) {
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ background:BG, borderRadius:"0 14px 14px 14px", padding:"8px 12px", display:"inline-block", maxWidth:"100%" }}>
             <button onClick={()=>onOpenUser&&onOpenUser({ userId:comment.userId, userName:comment.user, userTier:comment.userTier })} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontWeight:700, fontSize:13, color:DARK, fontFamily:"inherit" }}>{comment.user} </button>
-            <span style={{ fontSize:13, color:"#333", lineHeight:1.4,
-              ...(isLong && !expanded ? {
-                display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical", overflow:"hidden"
-              } : {})
-            }}>{comment.text}</span>
-            {isLong && (
-              <button onClick={()=>setExpanded(v=>!v)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontSize:12, fontWeight:700, color:GRAY, display:"block", marginTop:3, fontFamily:"inherit" }}>
-                {expanded ? "less" : "more"}
-              </button>
-            )}
+            <span style={{ fontSize:13, color:"#333", lineHeight:1.4 }}>
+              {isLong && !expanded
+                ? <>{comment.text.slice(0, 120)}… <button onClick={()=>setExpanded(true)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontSize:12, fontWeight:700, color:GRAY, fontFamily:"inherit" }}>more</button></>
+                : <>{comment.text}{isLong && <> <button onClick={()=>setExpanded(false)} style={{ background:"none", border:"none", cursor:"pointer", padding:0, fontSize:12, fontWeight:700, color:GRAY, fontFamily:"inherit" }}>less</button></>}</>
+              }
+            </span>
           </div>
           <div style={{ display:"flex", gap:12, alignItems:"center", marginTop:4, paddingLeft:4 }}>
             <span style={{ fontSize:11, color:GRAY }}>{timeAgo(comment.date)}</span>
