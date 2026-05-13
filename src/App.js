@@ -604,30 +604,35 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
             <button onClick={()=>setShowMenu(v=>!v)} style={{ background:"none", border:"none", cursor:"pointer", padding:"0 4px", display:"flex", alignItems:"center" }}>
               <MoreHorizontal size={18} color={GRAY}/>
             </button>
-            {showMenu && (
-              <div style={{ position:"absolute", right:0, top:"100%", background:W, borderRadius:12, boxShadow:"0 4px 24px rgba(0,0,0,0.15)", zIndex:50, minWidth:170, border:`1px solid ${LG}`, overflow:"hidden" }}>
-                {isOwner ? <>
-                  <button onClick={(e)=>{e.stopPropagation();e.preventDefault();setShowMenu(false);onEdit&&onEdit(review);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, fontFamily:"inherit", borderBottom:`1px solid ${LG}`, color:DARK }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                    Edit Review
-                  </button>
-                  <button onClick={(e)=>{e.stopPropagation();e.preventDefault();setConfirmDelete(true);setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, color:R, fontFamily:"inherit" }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                    Delete Review
-                  </button>
-                </> : <>
-                  <button onClick={()=>{handleShare();setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, fontFamily:"inherit", borderBottom:`1px solid ${LG}`, color:DARK }}>
-                    <Share2 size={15} color={GRAY}/> Share
-                  </button>
-                  <button onClick={()=>{onReport&&onReport(review);setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, color:R, fontFamily:"inherit" }}>
-                    <Flag size={15} color={R}/> Report
-                  </button>
-                </>}
-              </div>
-            )}
           </div>
         </div>
       </div>
+
+      {/* Action sheet — position:fixed so iOS touch events always work */}
+      {showMenu && (
+        <div style={{ position:"fixed", inset:0, zIndex:500, background:"rgba(0,0,0,0.4)" }} onClick={()=>setShowMenu(false)}>
+          <div style={{ position:"absolute", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:W, borderRadius:"20px 20px 0 0", padding:"8px 0 32px", animation:"slideUp 0.2s ease" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ width:36, height:4, borderRadius:2, background:LG, margin:"8px auto 16px" }}/>
+            {isOwner ? <>
+              <button onPointerUp={()=>{setShowMenu(false);setTimeout(()=>onEdit&&onEdit(review),50);}} style={{ display:"flex", alignItems:"center", gap:14, width:"100%", padding:"14px 24px", background:"none", border:"none", cursor:"pointer", fontSize:16, fontFamily:"inherit", borderBottom:`1px solid ${LG}`, color:DARK }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                Edit Review
+              </button>
+              <button onPointerUp={()=>{setShowMenu(false);setConfirmDelete(true);}} style={{ display:"flex", alignItems:"center", gap:14, width:"100%", padding:"14px 24px", background:"none", border:"none", cursor:"pointer", fontSize:16, color:R, fontFamily:"inherit" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                Delete Review
+              </button>
+            </> : <>
+              <button onPointerUp={()=>{setShowMenu(false);handleShare();}} style={{ display:"flex", alignItems:"center", gap:14, width:"100%", padding:"14px 24px", background:"none", border:"none", cursor:"pointer", fontSize:16, fontFamily:"inherit", borderBottom:`1px solid ${LG}`, color:DARK }}>
+                <Share2 size={18} color={GRAY}/> Share
+              </button>
+              <button onPointerUp={()=>{setShowMenu(false);onReport&&onReport(review);}} style={{ display:"flex", alignItems:"center", gap:14, width:"100%", padding:"14px 24px", background:"none", border:"none", cursor:"pointer", fontSize:16, color:R, fontFamily:"inherit" }}>
+                <Flag size={18} color={R}/> Report
+              </button>
+            </>}
+          </div>
+        </div>
+      )}
 
       {/* Delete confirmation */}
       {confirmDelete && (
