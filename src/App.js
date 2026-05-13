@@ -2513,6 +2513,8 @@ export default function App() {
     setReviews(rs => rs.map(r => r.id === reviewId ? { ...r, ...updates } : r));
     showToast("Review updated!");
   };
+
+  const handleReact = (reviewId, reaction) => {
     setReviews(rs=>rs.map(r=>r.id===reviewId?{...r,reactions:{...(r.reactions||{}),[reaction]:((r.reactions||{})[reaction]||0)+1}}:r));
   };
 
