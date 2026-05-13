@@ -593,11 +593,11 @@ function FeedPost({ review, currentUser, onAgree, onDisagree, onAddComment, onRe
             {showMenu && (
               <div style={{ position:"absolute", right:0, top:"100%", background:W, borderRadius:12, boxShadow:"0 4px 24px rgba(0,0,0,0.15)", zIndex:50, minWidth:170, border:`1px solid ${LG}`, overflow:"hidden" }}>
                 {isOwner ? <>
-                  <button onClick={()=>{onEdit&&onEdit(review);setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, fontFamily:"inherit", borderBottom:`1px solid ${LG}`, color:DARK }}>
+                  <button onClick={(e)=>{e.stopPropagation();e.preventDefault();setShowMenu(false);onEdit&&onEdit(review);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, fontFamily:"inherit", borderBottom:`1px solid ${LG}`, color:DARK }}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     Edit Review
                   </button>
-                  <button onClick={()=>{setConfirmDelete(true);setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, color:R, fontFamily:"inherit" }}>
+                  <button onClick={(e)=>{e.stopPropagation();e.preventDefault();setConfirmDelete(true);setShowMenu(false);}} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:14, color:R, fontFamily:"inherit" }}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                     Delete Review
                   </button>
@@ -2343,10 +2343,9 @@ export default function App() {
     const timeout = setTimeout(() => setAppLoading(false), 5000);
     (async ()=>{
       try {
-        // Load reviews inline so there's no closure issue
         const reviewData = await sb.query("reviews","?select=*,profiles(name,tier),locations(name)&order=created_at.desc&limit=50", session?.token||null);
         if (Array.isArray(reviewData) && reviewData.length>0) {
-          setReviews(reviewData.map(r=>({
+          const mapped = reviewData.map(r=>({
             id:r.id, locationId:r.location_id,
             locationName:r.locations?.name || r.location_id || "Unknown Location",
             userId:r.user_id, userName:r.profiles?.name||"User", userTier:r.profiles?.tier||"bronze",
@@ -2354,8 +2353,27 @@ export default function App() {
             images:r.images||[], image:(r.images||[])[0]||IMGS[0],
             verified:r.verified, categories:r.categories||{},
             agrees:r.agrees, disagrees:r.disagrees,
+            lat:r.lat, lng:r.lng,
             comments:[], reactions:{}, date:r.created_at,
-          })));
+          }));
+          try {
+            const commentData = await sb.query("comments","?select=*,profiles(name,tier)&order=created_at.asc&limit=1000", session?.token||null);
+            if (Array.isArray(commentData)) {
+              const byReview = {};
+              commentData.forEach(c => {
+                if (!byReview[c.review_id]) byReview[c.review_id] = [];
+                byReview[c.review_id].push({ id:c.id, userId:c.user_id, user:c.profiles?.name||"User", userTier:c.profiles?.tier||"bronze", text:c.text, parentId:c.parent_id, date:c.created_at, replies:[] });
+              });
+              mapped.forEach(r => {
+                const flat = byReview[r.id] || [];
+                const top = flat.filter(c => !c.parentId);
+                const replies = flat.filter(c => c.parentId);
+                replies.forEach(rep => { const p = top.find(c => c.id === rep.parentId); if (p) p.replies.push(rep); });
+                r.comments = top;
+              });
+            }
+          } catch {}
+          setReviews(mapped);
         }
       } catch {}
 
