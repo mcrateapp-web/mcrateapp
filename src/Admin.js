@@ -230,13 +230,25 @@ function Overview({ stats }) {
 }
 
 // ─── Reviews Tab ──────────────────────────────────────────────────────────────
+const MENU_ITEMS_ADMIN = ["Big Mac","Quarter Pounder","McDouble","Cheeseburger","Hamburger","Filet-O-Fish","McChicken","Chicken McNuggets","Crispy Chicken Burger","McFlurry","Sundae","Apple Pie","Large Fries","Medium Fries","Small Fries","Hash Brown","Egg McMuffin","Bacon & Egg McMuffin","Hotcakes","McCafé Coffee","Thickshake","Frozen Coke","Other"];
+
 function Reviews({ stats, token, onRefresh }) {
-  const [q,setQ]=useState(""); const [rFilter,setRFilter]=useState("all"); const [del,setDel]=useState(null); const [view,setView]=useState(null);
+  const [q,setQ]=useState(""); const [rFilter,setRFilter]=useState("all"); const [del,setDel]=useState(null); const [view,setView]=useState(null); const [edit,setEdit]=useState(null);
+  const [editRating,setEditRating]=useState(0); const [editText,setEditText]=useState(""); const [editItem,setEditItem]=useState(""); const [editHover,setEditHover]=useState(0); const [saving,setSaving]=useState(false);
+
   const rows = (stats.reviews||[]).filter(r=>{
     const loc=stats.locations?.find(l=>l.id===r.location_id)?.name||"";
     const user=stats.profiles?.find(p=>p.id===r.user_id)?.name||"";
     return (!q||loc.toLowerCase().includes(q.toLowerCase())||user.toLowerCase().includes(q.toLowerCase()))&&(rFilter==="all"||r.rating===parseInt(rFilter));
   }).map(r=>({...r,userName:stats.profiles?.find(p=>p.id===r.user_id)?.name||"Unknown",locationName:stats.locations?.find(l=>l.id===r.location_id)?.name||"Unknown"}));
+
+  const openEdit = (row) => { setEdit(row); setEditRating(row.rating); setEditText(row.text||""); setEditItem(row.food_item||MENU_ITEMS_ADMIN[0]); };
+
+  const saveEdit = async () => {
+    setSaving(true);
+    await sb.update("reviews",`id=eq.${edit.id}`,{rating:editRating,text:editText,food_item:editItem},token);
+    setSaving(false); setEdit(null); onRefresh();
+  };
 
   return (
     <div>
@@ -262,6 +274,7 @@ function Reviews({ stats, token, onRefresh }) {
           actions={row=>(
             <div style={{display:"flex",gap:8}}>
               <Btn small outline color={C.blue} onClick={()=>setView(row)}>View</Btn>
+              <Btn small outline color={C.dark} onClick={()=>openEdit(row)}>Edit</Btn>
               <Btn small outline color={C.red} onClick={()=>setDel(row)}>Delete</Btn>
             </div>
           )}
@@ -276,7 +289,42 @@ function Reviews({ stats, token, onRefresh }) {
           ))}
         </div>
         {view.text&&<div style={{fontSize:14,lineHeight:1.6,background:C.light,borderRadius:10,padding:14}}>{view.text}</div>}
-        <div style={{marginTop:16,textAlign:"right"}}><Btn color={C.red} onClick={()=>{setView(null);setDel(view);}}>Delete Review</Btn></div>
+        <div style={{marginTop:16,display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <Btn outline color={C.dark} onClick={()=>{setView(null);openEdit(view);}}>Edit Review</Btn>
+          <Btn color={C.red} onClick={()=>{setView(null);setDel(view);}}>Delete Review</Btn>
+        </div>
+      </Modal>}
+
+      {edit&&<Modal title="Edit Review" onClose={()=>setEdit(null)}>
+        <div style={{fontSize:13,color:C.gray,marginBottom:16}}>Editing review by <strong>{edit.userName}</strong> at <strong>{edit.locationName}</strong></div>
+        {(edit.images||[]).slice(0,1).map((img,i)=><img key={i} src={img} alt="" style={{width:"100%",borderRadius:10,marginBottom:16,objectFit:"cover",maxHeight:200}}/>)}
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div>
+            <label style={{fontSize:12,fontWeight:700,color:C.gray,textTransform:"uppercase",display:"block",marginBottom:6}}>Menu Item</label>
+            <select value={editItem} onChange={e=>setEditItem(e.target.value)} style={{width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:9,fontSize:14,fontFamily:"inherit",background:C.white,outline:"none"}}>
+              {MENU_ITEMS_ADMIN.map(m=><option key={m}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{fontSize:12,fontWeight:700,color:C.gray,textTransform:"uppercase",display:"block",marginBottom:8}}>Star Rating</label>
+            <div style={{display:"flex",gap:6}}>
+              {[1,2,3,4,5].map(n=>(
+                <button key={n} onMouseEnter={()=>setEditHover(n)} onMouseLeave={()=>setEditHover(0)} onClick={()=>setEditRating(n)}
+                  style={{fontSize:36,background:"none",border:"none",cursor:"pointer",color:n<=(editHover||editRating)?C.gold:C.border,transition:"color 0.1s",padding:0}}>★</button>
+              ))}
+              <span style={{fontSize:14,color:C.gray,alignSelf:"center",marginLeft:8}}>{editRating}/5</span>
+            </div>
+          </div>
+          <div>
+            <label style={{fontSize:12,fontWeight:700,color:C.gray,textTransform:"uppercase",display:"block",marginBottom:6}}>Caption</label>
+            <textarea value={editText} onChange={e=>setEditText(e.target.value)} rows={4}
+              style={{width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:9,fontSize:14,fontFamily:"inherit",outline:"none",resize:"vertical"}}/>
+          </div>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+            <Btn outline color={C.gray} onClick={()=>setEdit(null)}>Cancel</Btn>
+            <Btn onClick={saveEdit} disabled={saving}>{saving?"Saving…":"Save Changes"}</Btn>
+          </div>
+        </div>
       </Modal>}
 
       {del&&<Modal title="Delete Review?" onClose={()=>setDel(null)}>
